@@ -194,49 +194,6 @@ static inline bool cas_ptr(volatile void *addr, void *old_ptr,
 	return cas64((volatile uint64_t *)addr, (uint64_t)old_ptr,
                                           (uint64_t)new_ptr); 
 }
-static inline uint64_t get_timestamp() {                                  
-  uint64_t  ret;
-  asm volatile (                                                      
-      "rdtsc"
-      : "=A" (ret)
-      ); 
-  return ret;
-}
-static inline int ffs_int(int v) {
-  int pos;
-  asm volatile (
-      "bsf %1, %0"
-      : "=r" (pos)
-      : "r" (v)
-      );
-  return pos;
-}
-static inline int ffs_int64(int v) {
-  int pos;
-  asm volatile (
-      "bsfq %1, %0"
-      : "=r" (pos)
-      : "q" (v)
-      );
-  return pos;
-}
-static inline int fls_int(int v){
-  int pos;
-  asm volatile(
-      "bsr %1, %0"
-      : "=r" (pos)
-      :  "r" (v)
-      );
-  return pos;
-}
-static inline int fls_int64(int64_t v){
-  int pos;
-  asm volatile(
-      "bsrq %1, %0"
-      : "=r" (pos)
-      :  "q" (v)
-      );
-  return pos;
-}
+
 #endif //__SF_MALLOC_ATOMIC_H__
 

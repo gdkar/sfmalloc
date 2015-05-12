@@ -5,11 +5,12 @@ AR      = ar
 RANLIB  = ranlib
 
 OBJS = sf_malloc.o sf_malloc_new.o sf_malloc_wrapper.o
-SHARED_OBJS = sf_malloc_shared.o sf_malloc_new_shared.o sf_malloc_init_shared.o \
-              sf_malloc_wrapper_shared.o
+SHARED_OBJS = sf_malloc_shared.o sf_malloc_new_shared.o sf_malloc_init_shared.o sf_malloc_wrapper_shared.o
+PREFIX = /usr/local
 LIBS = -lpthread -lrt -ldl
-LIB_MALLOC = libsfmalloc.a libsfmalloc.so
-
+LIB_MALLOC = $(addprefix .libs/, libsfmalloc.a libsfmalloc.so)
+LIB_DIR = .libs
+OBJ_DIR = .objs
 OPT_FLAGS = -O3 -Wall -g -mmmx -msse -march=native \
   -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc \
   -fno-builtin-calloc -fno-builtin-cfree \
@@ -22,36 +23,41 @@ DEFS += -D_REENTRANT
 CFLAGS = -std=gnu11 -fPIC -shared $(OPT_FLAGS) $(INC_FLAGS) $(DEFS) 
 CXXFLAGS = $(OPT_FLAGS) -fPIC -shared -ffast-math -std=gnu++14 $(INC_FLAGS) $(DEFS)
 
-all: $(LIB_MALLOC)
+all: dirs $(LIB_MALLOC)
 
-sf_malloc.o: sf_malloc.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h
-	$(CC) $(CFLAGS) -DMALLOC_NEED_INIT -DMALLOC_USE_STATIC_LINKING -c $<
+dirs:
+	mkdir -p $(OBJ_DIR) $(LIB_DIR)
+.objs/sf_malloc.o: sf_malloc.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h
+	$(CC) $(CFLAGS) -DMALLOC_NEED_INIT -DMALLOC_NEED_THREAD_INIT -DMALLOC_USE_STATIC_LINKING -c $< -o $@
 
-sf_malloc_shared.o: sf_malloc.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h
+.objs/sf_malloc_shared.o: sf_malloc.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h
 	$(CC) $(CFLAGS) -DPIC -fPIC -c $< -o $@
 
-sf_malloc_wrapper.o: sf_malloc_wrapper.c
-	$(CC) $(CFLAGS) -c $<
+.objs/sf_malloc_wrapper.o: sf_malloc_wrapper.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-sf_malloc_wrapper_shared.o: sf_malloc_wrapper.c
+.objs/sf_malloc_wrapper_shared.o: sf_malloc_wrapper.c
 	$(CC) $(CFLAGS) -DPIC -fPIC -c $< -o $@
 
-sf_malloc_new.o: sf_malloc_new.cpp
-	$(CXX) $(CXXFLAGS) -c $<
+.objs/sf_malloc_new.o: sf_malloc_new.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-sf_malloc_new_shared.o: sf_malloc_new.cpp
+.objs/sf_malloc_new_shared.o: sf_malloc_new.cpp
 	$(CXX) $(CXXFLAGS) -DPIC -fPIC -c $< -o $@
 
-sf_malloc_init_shared.o: sf_malloc_init.cpp
+.objs/sf_malloc_init_shared.o: sf_malloc_init.cpp
 	$(CXX) $(CXXFLAGS) -DPIC -fPIC -c $< -o $@
 
-libsfmalloc.a: $(OBJS)
-	$(AR) cr $@ $(OBJS)
+.libs/libsfmalloc.a: $(addprefix .objs/,$(OBJS))
+	$(AR) cr $@ $(addprefix .objs/,$(OBJS))
 	$(RANLIB) $@
 
-libsfmalloc.so: $(SHARED_OBJS)
-	$(CXX) -shared $(LIBS) -o $@ $(SHARED_OBJS) 
-
+.libs/libsfmalloc.so: $(addprefix .objs/,$(SHARED_OBJS))
+	$(CXX) -shared $(LIBS) -o $@ $(addprefix .objs/, $(SHARED_OBJS))
+install:
+	install .libs/libsfmalloc.so $(PREFIX)/lib/
+	install .libs/libsfmalloc.a  $(PREFIX)/lib/
 clean:
 	rm -f *.o $(LIB_MALLOC)
+	rm -r .objs .libs
 

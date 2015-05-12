@@ -62,16 +62,16 @@
 ////////////////////////////////////////////////////////////////////////////
 #define PAGE_SIZE           (1 << PAGE_SHIFT)
 #define MAX_SIZE            (8u * PAGE_SIZE)
-#define ALIGNMENT           8
+#define ALIGNMENT           16
 #define NUM_CLASSES         60
 #define MAX_SMALL_SIZE      1024
 #define CLASS_ARRAY_SIZE    ((((1<<PAGE_SHIFT)*8u + 127 + (120<<7)) >> 7) + 1)
 #define NUM_PB_CACHE_WAY    8
 
 /* NUM_PAGE_CLASSES should be less than 256. */
-#define NUM_PAGE_CLASSES    62
+//#define NUM_PAGE_CLASSES    62
 //#define NUM_PAGE_CLASSES    126
-//#define NUM_PAGE_CLASSES    254
+#define NUM_PAGE_CLASSES    126
 
 #if (NUM_PAGE_CLASSES <= 62)
 #define SPH_SIZE  PAGE_SIZE
@@ -91,6 +91,7 @@
 #define TLS_MODEL           __attribute__ ((tls_model ("initial-exec")))
 
 
+typedef struct hazard_ptr hazard_ptr_t;
 ////////////////////////////////////////////////////////////////////////////
 // Type Definitions
 ////////////////////////////////////////////////////////////////////////////
@@ -155,13 +156,6 @@ typedef struct sph {
 //-------------------------------------------------------------------
 // Type for Hazard Pointer
 //-------------------------------------------------------------------
-typedef struct hazard_ptr hazard_ptr_t;
-struct hazard_ptr {
-  hazard_ptr_t*     next;
-  sph_t*            node;
-  volatile uint32_t active;
-  char pad[CACHE_LINE_SIZE-(sizeof(void*)*2 + sizeof(uint32_t))];
-};
 //-------------------------------------------------------------------
 // Type for Page Block Header (PBH)
 //-------------------------------------------------------------------

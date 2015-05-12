@@ -57,9 +57,10 @@
 #include "sf_malloc_def.h"
 #include "sf_malloc_stat.h"
 #include "sf_malloc_atomic.h"
+#include "sf_malloc_asm.h"
+#include "sf_malloc_hazard.h"
 
 #include <assert.h>
-
 ////////////////////////////////////////////////////////////////////////////
 // Internal Data
 ////////////////////////////////////////////////////////////////////////////
@@ -73,9 +74,6 @@ static pthread_key_t     g_thread_key;
 ////////////////////////////////////////////////////////////////////////////
 static sizemap_t         g_sizemap;
 static pagemap_t         g_pagemap;
-// Hazard Pointer List
-static hazard_ptr_t*     g_hazard_ptr_list = NULL;
-static volatile uint32_t g_hazard_ptr_free_num = 0;
 // Free Superpage List
 static sph_t*            g_free_sp_list = NULL;
 static volatile uint32_t g_free_sp_len = 0;
@@ -132,10 +130,6 @@ static inline void   sph_link_init(sph_t* sph);
 static inline void   sph_list_prepend(sph_t** list, sph_t* sph);
 static inline sph_t* sph_list_pop(sph_t** list);
 static inline void   sph_list_remove(sph_t** list, sph_t* sph);
-/* Hazard Pointer */
-static hazard_ptr_t* hazard_ptr_alloc();
-static void          hazard_ptr_free(hazard_ptr_t* hptr);
-static bool scan_hazard_pointers(sph_t* sph);
 /* Page Block Header (PBH) */
 static inline pbh_t* pbh_alloc(sph_t* sph, size_t page_id, size_t len);
 static inline void   pbh_free(pbh_t* pbh);
@@ -229,9 +223,7 @@ void sf_malloc_init() {
   }
 #ifdef MALLOC_USE_STATIC_LINKING
   // Register the exit function.
-  if (atexit(sf_malloc_exit)) {
-    HANDLE_ERROR("atexit");
-  }
+  if (atexit(sf_malloc_exit)) {HANDLE_ERROR("atexit");}
 #endif
   LOG_D("[T%u] sf_malloc_init(): TLH=%p\n", TID(), &l_tlh);
 }
@@ -559,7 +551,7 @@ static void sph_free(tlh_t* tlh, sph_t* sph) {
   // Check the hazard_mark.
   bool hazardous = false;
   if (sph->hazard_mark) {
-    if (scan_hazard_pointers(sph)) {hazardous = true;}
+    if (hazard_ptr_scan_single(sph)) {hazardous = true;}
     else {sph->hazard_mark = false;}
   }
   if (hazardous || g_free_sp_len < FREE_SP_LIST_THRESHOLD) {
@@ -774,46 +766,7 @@ static inline void sph_list_remove(sph_t** list, sph_t* sph) {
     sph_link_init(sph);
   }
 }
-////////////////////////////////////////////////////////////////////////////
-// Hazard Pointer List Functions
-////////////////////////////////////////////////////////////////////////////
-static hazard_ptr_t* hazard_ptr_alloc() {
-  // Allocate from the current list.
-  if (g_hazard_ptr_free_num > 0) {
-    for (hazard_ptr_t* hp = g_hazard_ptr_list; hp != NULL; hp = hp->next) {
-      if ((hp->active) || (atomic_xchg_uint(&hp->active, 1))) continue;
-      atomic_dec_int((int32_t*)&g_hazard_ptr_free_num);
-      return hp;
-    }
-  }
-  // Allocate a new page and split it.
-  hazard_ptr_t* first_hptr = (hazard_ptr_t*)do_mmap(PAGE_SIZE);
-  first_hptr->active = 1;
-  uint32_t rem_len = (PAGE_SIZE / sizeof(hazard_ptr_t)) - 1;
-  hazard_ptr_t* last_hptr = first_hptr;
-  for (uint32_t i = 0; i < rem_len; i++) {
-    hazard_ptr_t* next_hptr = last_hptr + 1;
-    last_hptr->next = next_hptr;
-    last_hptr = next_hptr;
-  }
-  hazard_ptr_t* top;
-  do {
-    top = g_hazard_ptr_list;
-    last_hptr->next = top;
-  } while (!cas_ptr(&g_hazard_ptr_list, top, first_hptr));
-  atomic_add_uint(&g_hazard_ptr_free_num, rem_len);
-  return first_hptr;
-}
-static void hazard_ptr_free(hazard_ptr_t* hptr) {
-  hptr->active = 0;
-  atomic_inc_uint(&g_hazard_ptr_free_num);
-}
-static bool scan_hazard_pointers(sph_t* sph) {
-  for (hazard_ptr_t* hp = g_hazard_ptr_list; hp != NULL; hp = hp->next) {
-    if (hp->node == sph) return true;
-  }
-  return false;
-}
+
 ////////////////////////////////////////////////////////////////////////////
 // PBH Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -1035,11 +988,11 @@ static void pb_free(tlh_t* tlh, pbh_t* pbh) {
 }
 static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
   sph_t* sph = pbh_get_superpage(pbh);
-  tlh->hazard_ptr->node = sph;
+  hazard_ptr_set(tlh->hazard_ptr,(void**)&sph); 
   while (1) {
     if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
-        tlh->hazard_ptr->node = NULL;
+        hazard_ptr_clr(tlh->hazard_ptr,sph);
         pb_free(tlh, pbh);
         return;
       }
@@ -1052,7 +1005,7 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
     }
   }
   if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {take_superpage(tlh, sph);}
-  tlh->hazard_ptr->node = NULL;
+  hazard_ptr_clr(tlh->hazard_ptr,sph);
 }
 /*
    Split the pbh into two pbhs.
@@ -1472,11 +1425,11 @@ static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,void* first, void* last, u
   uint16_t blk_idx = (uintptr_t)(first - start_addr) / size;
   remote_list_t new_top;
   new_top.head = blk_idx;
-  tlh->hazard_ptr->node = sph;
+  hazard_ptr_set(tlh->hazard_ptr,(void**)&sph);
   while (true) {
     if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
-        tlh->hazard_ptr->node = NULL;
+        hazard_ptr_clr(tlh->hazard_ptr,sph);
         return false;
       }
     }
@@ -1493,7 +1446,7 @@ static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,void* first, void* last, u
     }
   }
   if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {take_superpage(tlh, sph);}
-  tlh->hazard_ptr->node = NULL;
+  hazard_ptr_clr(tlh->hazard_ptr,sph);
   return true;
 }
 /* Deallocate a memory for small sizes. */
@@ -1746,20 +1699,17 @@ void *realloc(void *ptr, size_t size) {
 int posix_memalign(void **memptr, size_t alignment, size_t size) {
   inc_cnt_memalign();
   memalign_timer_start();
-
   if (size == 0) {
     *memptr = NULL;
     memalign_timer_stop();
     return 0;
   }
-
   // Check if alignment is a power of 2.
   if ((alignment & (alignment - 1)) != 0) {
     *memptr = NULL;
     memalign_timer_stop();
     return EINVAL;
   }
-
   // Fall back to malloc if we would already align properly.
   if (alignment <= get_alignment(size)) {
     *memptr = malloc(size);
@@ -1767,7 +1717,6 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
     memalign_timer_stop();
     return 0;
   }
-
   // Bigger alignment.
   if (size <= MAX_SIZE && alignment < PAGE_SIZE) {
     uint32_t cl = get_sizeclass(size);
@@ -1827,6 +1776,9 @@ void *valloc(size_t size) {
   void *free_blk;
   int ret = posix_memalign(&free_blk, sysconf(_SC_PAGESIZE), size);
   assert(ret == 0);
+#ifdef NDEBUG
+  (void)ret;
+#endif
   return free_blk;
 }
 /*
@@ -1846,6 +1798,9 @@ void *memalign(size_t boundary, size_t size) {
   void *free_blk;
   int ret = posix_memalign(&free_blk, boundary, size);
   assert(ret == 0);
+#ifdef NDEBUG
+  (void)ret;
+#endif
   return free_blk;
 }
 ////////////////////////////////////////////////////////////////////////////
