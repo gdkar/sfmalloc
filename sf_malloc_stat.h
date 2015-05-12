@@ -42,19 +42,13 @@
 #define __SF_MALLOC_STAT_H__
 
 #ifdef MALLOC_STATS
+#include "sf_malloc_atomic.h"
 static double CPU_CLOCK = 1.0;
 
 //-------------------------------------------------------------------
 // Statistics
 //-------------------------------------------------------------------
-static __inline__ uint64_t get_timestamp() {                                  
-  unsigned hi, lo;
-  __asm__ __volatile__ (                                                      
-      "rdtsc"
-      : "=a" (lo), "=d" (hi)                                                  
-      ); 
-  return ((uint64_t)lo | ((uint64_t)hi << 32));                               
-} 
+ 
 
 typedef struct {
   uint64_t cnt_mmap;

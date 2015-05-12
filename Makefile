@@ -1,6 +1,6 @@
 
-CC      = gcc
-CXX     = g++
+CC      = clang
+CXX     = clang++
 AR      = ar
 RANLIB  = ranlib
 
@@ -10,7 +10,7 @@ SHARED_OBJS = sf_malloc_shared.o sf_malloc_new_shared.o sf_malloc_init_shared.o 
 LIBS = -lpthread -lrt -ldl
 LIB_MALLOC = libsfmalloc.a libsfmalloc.so
 
-OPT_FLAGS = -O2 -Wall -g -mmmx -msse \
+OPT_FLAGS = -O3 -Wall -g -mmmx -msse -march=native \
   -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc \
   -fno-builtin-calloc -fno-builtin-cfree \
   -fno-builtin-memalign -fno-builtin-posix_memalign \
@@ -19,8 +19,8 @@ INC_FLAGS =
 DEFS += -D_REENTRANT
 #DEFS += -D_REENTRANT -DNDEBUG
 
-CFLAGS = -std=gnu99 $(OPT_FLAGS) $(INC_FLAGS) $(DEFS) 
-CXXFLAGS = $(OPT_FLAGS) $(INC_FLAGS) $(DEFS)
+CFLAGS = -std=gnu11 -fPIC -shared $(OPT_FLAGS) $(INC_FLAGS) $(DEFS) 
+CXXFLAGS = $(OPT_FLAGS) -fPIC -shared -ffast-math -std=gnu++14 $(INC_FLAGS) $(DEFS)
 
 all: $(LIB_MALLOC)
 

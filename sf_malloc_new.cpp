@@ -39,7 +39,9 @@
 /*****************************************************************************/
 
 #include <new>
-
+#include <unistd.h>
+#include <stddef.h>
+#include <stdint.h>
 extern "C" {
   void *malloc(size_t);
   void free(void *);
@@ -49,35 +51,12 @@ extern "C" {
 # define __THROW
 #endif
 
-void *operator new(size_t size) throw (std::bad_alloc) {
-  return malloc(size);
-}
-
-void operator delete(void *p) __THROW {
-  free(p);
-}
-
-void *operator new[](size_t size) throw (std::bad_alloc) {
-  return malloc(size);
-}
-
-void operator delete[](void *p) __THROW {
-  free(p);
-}
-
-void *operator new(size_t size, const std::nothrow_t&) __THROW {
-  return malloc(size);
-}
-
-void *operator new[](size_t size, const std::nothrow_t&) __THROW {
-  return malloc(size);
-}
-
-void operator delete(void *p, const std::nothrow_t&) __THROW {
-  free(p);
-}
-
-void operator delete[](void *p, const std::nothrow_t&) __THROW {
-  free(p);
-}
+void *operator new(size_t size) throw (std::bad_alloc) {return malloc(size);}
+void operator delete(void *p) __THROW {free(p);}
+void *operator new[](size_t size) throw (std::bad_alloc) {return malloc(size);}
+void operator delete[](void *p) __THROW {free(p);}
+void *operator new(size_t size, const std::nothrow_t&) __THROW {return malloc(size);}
+void *operator new[](size_t size, const std::nothrow_t&) __THROW {return malloc(size);}
+void operator delete(void *p, const std::nothrow_t&) __THROW {free(p);}
+void operator delete[](void *p, const std::nothrow_t&) __THROW {free(p);}
 
