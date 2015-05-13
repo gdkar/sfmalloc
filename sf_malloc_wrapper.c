@@ -52,7 +52,6 @@
 typedef int (*pthread_create_fpt)(pthread_t *, const pthread_attr_t *, void *(*)(void*), void *);
 typedef void (*pthread_exit_fpt)(void *);
 typedef void *(*start_fpt)(void *);
-
 typedef struct {
   start_fpt start_fun;
   void *arg;
@@ -81,8 +80,7 @@ static void *wrapper(void *warg) {
   return result;
 }
 /* Wrapper pthread_create() to call the wrapper function of start_routine */
-int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
-                   void *(*start_routine)(void *), void *arg) {
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg) {
   if (thread_create == NULL) {dlsym_pthread_create();}
   wrapper_arg_t *warg = (wrapper_arg_t *)malloc(sizeof(wrapper_arg_t));
   if (warg == NULL) {
@@ -93,7 +91,6 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
   warg->start_fun = start_routine;
   warg->arg = arg;
   int result = thread_create(thread, attr, wrapper, warg);
-
   return result;
 }
 

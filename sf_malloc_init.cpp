@@ -46,15 +46,19 @@
 
 extern "C" {
   #include "sf_malloc_internal.h"
+  #include <pthread.h>
 }
 class SFMallocInit {
 public:
   SFMallocInit() {
-    sf_malloc_init();
+    pthread_once(&s_init_once,sf_malloc_init);
   }
   ~SFMallocInit() {
-    sf_malloc_exit();
+    pthread_once(&s_exit_once,sf_malloc_exit);
   }
+  static pthread_once_t s_init_once;
+  static pthread_once_t s_exit_once;
 };
-
+pthread_once_t SFMallocInit::s_init_once = PTHREAD_ONCE_INIT;
+pthread_once_t SFMallocInit::s_exit_once  = PTHREAD_ONCE_INIT;
 static SFMallocInit sf_malloc_initializer;

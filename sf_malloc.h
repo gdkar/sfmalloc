@@ -45,7 +45,6 @@ static inline void *sf_malloc(size_t size);
 static inline void  sf_free(void *ptr);
 static inline void *sf_calloc(size nmemb, size_t size);
 static inline void *sf_realloc(void*ptr, size_t size);
-
 static inline int   sf_posix_memalign(void** pptr, size_t align, size_t size);
 static inline void *sf_valloc( size_t size);
 static inline void *sf_memalign(size_t align, size_t size);
@@ -59,7 +58,7 @@ __attribute__((noinline)) int  posix_memalign(void **memptr, size_t alignment, s
 __attribute__((noinline)) void *valloc(size_t size);
 __attribute__((noinline)) void *memalign(size_t boundary, size_t size);
 
-_attribute__((noinline))  void sf_malloc_init();
-void malloc_stats();
+__attribute__((noinline))  void sf_malloc_init();
+__attribute__((noinline))  void malloc_stats();
 
 #endif //__SF_MALLOC_H__

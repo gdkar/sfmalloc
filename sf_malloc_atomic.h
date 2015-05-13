@@ -92,7 +92,7 @@ static inline void* _atomic_xchg_ptr(volatile void **addr, void*  val) {
       );
   return (void*)uival;
 }
-#define atomic_xchg_ptr(_addr,_val) ((typeof(*addr))_atomic_xchg_ptr((volatile void**)(_addr),(void*)(_val)))
+#define atomic_xchg_ptr(_addr,_val) ((typeof(*_addr))_atomic_xchg_ptr((volatile void**)(_addr),(void*)(_val)))
 /*
    This function atomically increment the value of *addr and returns the 
    value of *addr before the increment.
