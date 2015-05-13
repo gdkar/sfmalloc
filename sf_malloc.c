@@ -45,6 +45,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <unistd.h>
+#ifndef __USE_GNU
+#define __USE_GNU
+#endif
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/fcntl.h>
@@ -57,7 +60,8 @@
 #include "sf_malloc_def.h"
 #include "sf_malloc_stat.h"
 #include "sf_malloc_atomic.h"
-
+#include "sf_malloc_asm.h"
+#include "sf_malloc_hazard.h"
 #include <assert.h>
 
 
@@ -77,8 +81,6 @@ static sizemap_t         g_sizemap;
 static pagemap_t         g_pagemap;
 
 // Hazard Pointer List
-static hazard_ptr_t*     g_hazard_ptr_list = NULL;
-static volatile uint32_t g_hazard_ptr_free_num = 0;
 static void*             g_mmap_top = ((void*)(1ULL<<46));
 // Free Superpage List
 static sph_t*            g_free_sp_list = NULL;
@@ -109,9 +111,10 @@ void sf_malloc_thread_exit();
 void sf_malloc_destructor(void* val);
 
 /* mmap/munmap */
-static inline void* do_mmap(size_t size);
-static inline void  do_munmap(void* addr, size_t size);
-static inline void  do_madvise(void* addr, size_t size);
+void* do_mmap(size_t size);
+void  do_munmap(void* addr, size_t size);
+void *do_mremap(void* oaddr, size_t osize, void*naddr,size_t nsize);
+void  do_madvise(void* addr, size_t size);
 
 /* SizeMap */
 static void sizemap_init();
@@ -143,11 +146,6 @@ static inline void   sph_link_init(sph_t* sph);
 static inline void   sph_list_prepend(sph_t** list, sph_t* sph);
 static inline sph_t* sph_list_pop(sph_t** list);
 static inline void   sph_list_remove(sph_t** list, sph_t* sph);
-
-/* Hazard Pointer */
-static hazard_ptr_t* hazard_ptr_alloc();
-static void          hazard_ptr_free(hazard_ptr_t* hptr);
-static bool scan_hazard_pointers(sph_t* sph);
 
 /* Page Block Header (PBH) */
 static inline pbh_t* pbh_alloc(sph_t* sph, size_t page_id, size_t len);
@@ -322,7 +320,7 @@ void sf_malloc_destructor(void* val) {
 ////////////////////////////////////////////////////////////////////////////
 #define MMAP_PROT   (PROT_READ | PROT_WRITE | PROT_EXEC)
 #define MMAP_FLAGS  (MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED)
-static inline void* do_mmap(size_t size) {
+void* do_mmap(size_t size) {
   void* mem = atomic_add_ptr(&g_mmap_top,size);
   mem =  mmap(mem, size, MMAP_PROT, MMAP_FLAGS, -1, 0);
   if (mem == MAP_FAILED) {
@@ -336,9 +334,24 @@ static inline void* do_mmap(size_t size) {
 
   return mem;
 }
+void* do_mremap(void* oaddr, size_t osize, void* naddr, size_t nsize){
+  void *mem = oaddr;
+  if(nsize > osize || (naddr && naddr !=oaddr)){
+    if(!naddr) naddr = atomic_add_ptr(&g_mmap_top,nsize);
+    mem = mremap(mem,osize,nsize,MREMAP_MAYMOVE|(naddr?MREMAP_FIXED:0), naddr);
+    if(mem==MAP_FAILED)
+    {perror("do_mremap");CRASH("osize=%lu, oaddr=%p, nsize=%lu,  naddr=%p\n",osize,oaddr,nsize,naddr);}
+  //  mem = mmap(oaddr,osize,MMAP_PROOT, MMAP_FLAGS, -1, 0);
+    inc_cnt_mremap();
+    inc_size_mremap(nsize);
+    inc_size_mmap(nsize);
+    inc_size_munmap(osize);
+    update_size_mmap_max();
+  }
+  return mem;
+}
 
-
-static inline void do_munmap(void* addr, size_t size) {
+void do_munmap(void* addr, size_t size) {
   if (munmap(addr, size) == -1) {
     perror("do_munmap");
     CRASH("addr=%p size=%lu\n", addr, size);
@@ -349,7 +362,7 @@ static inline void do_munmap(void* addr, size_t size) {
 }
 
 
-static inline void do_madvise(void* addr, size_t size) {
+void do_madvise(void* addr, size_t size) {
   if (madvise(addr, size, MADV_DONTNEED) == -1) {
     perror("do_madvise");
     CRASH("addr=%p size=%lu\n", addr, size);
@@ -677,7 +690,7 @@ static void sph_free(tlh_t* tlh, sph_t* sph) {
   // Check the hazard_mark.
   bool hazardous = false;
   if (sph->hazard_mark) {
-    if (scan_hazard_pointers(sph)) {
+    if (hazard_ptr_scan_single(sph)) {
       hazardous = true;
     } else {
       sph->hazard_mark = false;
@@ -971,59 +984,6 @@ static inline void sph_list_remove(sph_t** list, sph_t* sph) {
     sph->next->prev = sph->prev;
     sph_link_init(sph);
   }
-}
-
-
-
-////////////////////////////////////////////////////////////////////////////
-// Hazard Pointer List Functions
-////////////////////////////////////////////////////////////////////////////
-static hazard_ptr_t* hazard_ptr_alloc() {
-  // Allocate from the current list.
-  if (g_hazard_ptr_free_num > 0) {
-    for (hazard_ptr_t* hp = g_hazard_ptr_list; hp != NULL; hp = hp->next) {
-      if (hp->active) continue;
-      if (atomic_xchg_uint(&hp->active, 1)) continue;
-      atomic_dec_int((int32_t*)&g_hazard_ptr_free_num);
-      return hp;
-    }
-  }
-
-  // Allocate a new page and split it.
-  hazard_ptr_t* first_hptr = (hazard_ptr_t*)do_mmap(PAGE_SIZE);
-  first_hptr->active = 1;
-
-  uint32_t rem_len = (PAGE_SIZE / sizeof(hazard_ptr_t)) - 1;
-
-  hazard_ptr_t* last_hptr = first_hptr;
-  for (uint32_t i = 0; i < rem_len; i++) {
-    hazard_ptr_t* next_hptr = last_hptr + 1;
-    last_hptr->next = next_hptr;
-    last_hptr = next_hptr;
-  }
-
-  hazard_ptr_t* top;
-  do {
-    top = g_hazard_ptr_list;
-    last_hptr->next = top;
-  } while (!cas_ptr(&g_hazard_ptr_list, top, first_hptr));
-  atomic_add_uint(&g_hazard_ptr_free_num, rem_len);
-
-  return first_hptr;
-}
-
-
-static void hazard_ptr_free(hazard_ptr_t* hptr) {
-  hptr->active = 0;
-  atomic_inc_uint(&g_hazard_ptr_free_num);
-}
-
-
-static bool scan_hazard_pointers(sph_t* sph) {
-  for (hazard_ptr_t* hp = g_hazard_ptr_list; hp != NULL; hp = hp->next) {
-    if (hp->node == sph) return true;
-  }
-  return false;
 }
 
 
@@ -1326,14 +1286,12 @@ static void pb_free(tlh_t* tlh, pbh_t* pbh) {
 
 static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
   sph_t* sph = pbh_get_superpage(pbh);
-  tlh->hazard_ptr->node = sph;
-
+  sph = hazard_ptr_set(tlh->hazard_ptr,(void**)&sph);
   while (1) {
     if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
-        tlh->hazard_ptr->node = NULL;
         pb_free(tlh, pbh);
-        return;
+        break;
       }
     }
 
@@ -1348,7 +1306,7 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
   if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
     take_superpage(tlh, sph);
   }
-  tlh->hazard_ptr->node = NULL;
+  hazard_ptr_clr(tlh->hazard_ptr,(void*)sph);
 }
 
 
@@ -1893,38 +1851,30 @@ static inline void* large_malloc(size_t page_len) {
 static inline void* huge_malloc(size_t page_len) {
   // Use mmap directly.
   size_t size = page_len << PAGE_SHIFT;
-
   void* ret = do_mmap(size);
-
   size_t page_id = (size_t)ret >> PAGE_SHIFT;
   void* val = (void*)(size | HUGE_MALLOC_MARK);
-
   pagemap_expand(page_id, 1);
   pagemap_set(page_id, val);
-
   return ret;
 }
 
 
-static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,
-                               void* first, void* last, uint32_t N) {
+static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,void* first, void* last, uint32_t N) {
   sph_t* sph = pbh_get_superpage(pbh);
   uint32_t cl = pbh->sizeclass;
-
   void* start_addr = (void*)(pbh->start_page << PAGE_SHIFT);
   uint32_t size = get_size_for_class(cl);
   uint16_t blk_idx = (uintptr_t)(first - start_addr) / size;
-
   remote_list_t new_top;
   new_top.head = blk_idx;
-
-  tlh->hazard_ptr->node = sph;
-
+  sph = hazard_ptr_set(tlh->hazard_ptr,(void**)&sph);
+  bool ret = false;
   while (true) {
     if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
-        tlh->hazard_ptr->node = NULL;
-        return false;
+        ret = false;
+        break;
       }
     }
 
@@ -1939,17 +1889,16 @@ static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,
 
     if (cas64((uint64_t*)&pbh->remote_list, top.together, new_top.together)) {
       sph->omark.finish_mark = DO_NOT_FINISH;
+      ret = true;
       break;
     }
   }
 
-  if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
+  if (ret && UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
     take_superpage(tlh, sph);
   }
-
-  tlh->hazard_ptr->node = NULL;
-
-  return true;
+  hazard_ptr_clr(tlh->hazard_ptr,(void*)sph);
+  return ret;
 }
 
 
@@ -2111,17 +2060,13 @@ static inline void *sf_malloc(size_t size) {
 static inline void sf_free(void *ptr) {
   inc_cnt_free();
   free_timer_start();
-
 #ifdef MALLOC_NEED_INIT
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
 #endif
-
   if (UNLIKELY(ptr == NULL)) return;
-
   size_t page_id = (size_t)ptr >> PAGE_SHIFT;
   void* val = pagemap_get(page_id);
   assert(val != NULL);
-
   if (UNLIKELY((uintptr_t)val & HUGE_MALLOC_MARK)) {
     size_t size = (size_t)val & ~HUGE_MALLOC_MARK;
     huge_free(ptr, size);
@@ -2224,6 +2169,18 @@ static inline void *sf_realloc(void *ptr, size_t size) {
   // old_size, allocate a new block.
   void* ret;
   if ((size > old_size) || (size < (old_size / 2))) {
+    if(size>MAX_SIZE && old_size > MAX_SIZE){
+      size_t old_len = GET_PAGE_LEN(old_size)*PAGE_SIZE;
+      size_t new_len = GET_PAGE_LEN(size)    *PAGE_SIZE;
+      ret = do_mremap(ptr,old_len,NULL, new_len);
+      size_t page_id = (size_t)ptr>> PAGE_SHIFT;
+      pagemap_set(page_id, NULL);
+      page_id = (size_t)ret>>PAGE_SHIFT;
+      void* val = (void*)(size | HUGE_MALLOC_MARK);
+      pagemap_expand(page_id, 1);
+      pagemap_set(page_id,val);
+  
+    }
     ret = sf_malloc(size);
     memmove(ret, ptr, ((old_size < size) ? old_size : size));
     sf_free(ptr);
@@ -2429,6 +2386,7 @@ void print_stats() {
       "pcache  : malloc(hit:%lu real_hit:%lu miss:%lu evict:%lu)\n"
       "          free(hit:%lu miss:%lu evict:%lu)\n"
       "mmap    : cnt(%lu) size(%lu B, %.1f KB, %.1f MB) max(%.1f MB)\n"
+      "mremap  : cnt(%lu) size(%lu B, %.1f KB, %.1f MB)\n"
       "munmap  : cnt(%lu) size(%lu B, %.1f KB, %.1f MB)\n"
       "madvise : cnt(%lu) size(%lu B, %.1f KB, %.1f MB)\n\n",
       l_tlh.thread_id,
@@ -2443,6 +2401,9 @@ void print_stats() {
       get_cnt_mmap(), get_size_mmap(),
       getKB(get_size_mmap()), getMB(get_size_mmap()),
       getMB(get_size_mmap_max()),
+      
+      get_cnt_mremap(), get_size_mremap(),
+      getKB(get_size_mremap()), getMB(get_size_mremap()),
 
       get_cnt_munmap(), get_size_munmap(),
       getKB(get_size_munmap()), getMB(get_size_munmap()),

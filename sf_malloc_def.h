@@ -63,7 +63,7 @@
 #define PAGE_SIZE           (1 << PAGE_SHIFT)
 #define MAX_SIZE            (8u * PAGE_SIZE)
 #define ALIGNMENT           8
-#define NUM_CLASSES         60
+#define NUM_CLASSES         126
 #define MAX_SMALL_SIZE      1024
 #define CLASS_ARRAY_SIZE    ((((1<<PAGE_SHIFT)*8u + 127 + (120<<7)) >> 7) + 1)
 #define NUM_PB_CACHE_WAY    8
@@ -170,12 +170,6 @@ typedef struct sph {
 // Type for Hazard Pointer
 //-------------------------------------------------------------------
 typedef struct hazard_ptr hazard_ptr_t;
-struct hazard_ptr {
-  hazard_ptr_t*     next;
-  sph_t*            node;
-  volatile uint32_t active;
-  char pad[CACHE_LINE_SIZE-(sizeof(void*)*2 + sizeof(uint32_t))];
-};
 
 
 //-------------------------------------------------------------------

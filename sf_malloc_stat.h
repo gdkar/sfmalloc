@@ -40,31 +40,24 @@
 
 #ifndef __SF_MALLOC_STAT_H__
 #define __SF_MALLOC_STAT_H__
-
+#include "sf_malloc_asm.h"
 #ifdef MALLOC_STATS
 static double CPU_CLOCK = 1.0;
 
 //-------------------------------------------------------------------
 // Statistics
 //-------------------------------------------------------------------
-static __inline__ uint64_t get_timestamp() {                                  
-  unsigned hi, lo;
-  __asm__ __volatile__ (                                                      
-      "rdtsc"
-      : "=a" (lo), "=d" (hi)                                                  
-      ); 
-  return ((uint64_t)lo | ((uint64_t)hi << 32));                               
-} 
-
 typedef struct {
   uint64_t cnt_mmap;
+  uint64_t cnt_mremap;
   uint64_t cnt_munmap;
   uint64_t cnt_madvise;
   uint64_t size_mmap;
+  uint64_t size_mremap;
   uint64_t size_munmap;
   uint64_t size_madvise;
   uint64_t size_mmap_max;
-
+  uint64_t size_mremap_max;
   uint64_t cnt_malloc;
   uint64_t cnt_free;
   uint64_t cnt_realloc;
@@ -96,9 +89,11 @@ static __thread thread_stat_t l_stat TLS_MODEL = (thread_stat_t){0};
 
 
 #define inc_cnt_mmap()                l_stat.cnt_mmap++
+#define inc_cnt_mremap()              l_stat.cnt_mremap++
 #define inc_cnt_munmap()              l_stat.cnt_munmap++
 #define inc_cnt_madvise()             l_stat.cnt_madvise++
 #define inc_size_mmap(s)              l_stat.size_mmap += (s)
+#define inc_size_mremap(s)            l_stat.size_mremap += (s)
 #define inc_size_munmap(s)            l_stat.size_munmap += (s)
 #define inc_size_madvise(s)           l_stat.size_madvise += (s)
 #define update_size_mmap_max()        \
@@ -106,9 +101,11 @@ static __thread thread_stat_t l_stat TLS_MODEL = (thread_stat_t){0};
     l_stat.size_mmap_max = l_stat.size_mmap - l_stat.size_munmap
 
 #define get_cnt_mmap()                l_stat.cnt_mmap
+#define get_cnt_mremap()                l_stat.cnt_mremap
 #define get_cnt_munmap()              l_stat.cnt_munmap
 #define get_cnt_madvise()             l_stat.cnt_madvise
 #define get_size_mmap()               l_stat.size_mmap
+#define get_size_mremap()               l_stat.size_mremap
 #define get_size_munmap()             l_stat.size_munmap
 #define get_size_madvise()            l_stat.size_madvise
 #define get_size_mmap_max()           l_stat.size_mmap_max
@@ -182,17 +179,21 @@ static __thread thread_stat_t l_stat TLS_MODEL = (thread_stat_t){0};
 #else //MALLOC_STATS
 
 #define inc_cnt_mmap()
+#define inc_cnt_mremap()
 #define inc_cnt_munmap()
 #define inc_cnt_madvise()
 #define inc_size_mmap(s)
+#define inc_size_mremap(s)
 #define inc_size_munmap(s)
 #define inc_size_madvise(s)
 #define update_size_mmap_max()
 
 #define get_cnt_mmap()
+#define get_cnt_mremap()
 #define get_cnt_munmap()
 #define get_cnt_madvise()
 #define get_size_mmap()
+#define get_size_mrmap()
 #define get_size_munmap()
 #define get_size_madvise()
 #define get_size_mmap_max()

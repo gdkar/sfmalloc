@@ -5,12 +5,13 @@
 #include <stdint.h>
 
 static inline uint64_t get_timestamp() {                                  
-  uint64_t  ret;
+  uint32_t  hi,lo;
   asm volatile (                                                      
       "rdtsc"
-      : "=A" (ret)
+      : "=d" (hi)
+      , "=a" (lo)
       ); 
-  return ret;
+  return (((uint64_t)hi)<<32)|((uint64_t)lo);
 }
 static inline int ffs_int(int v) {
   int pos;
@@ -91,8 +92,22 @@ static inline uint64_t xorshift1024star(xorshift1024_state_t* state){
   return (state->s[ p ] = s0 ^ s1 ) * 1181783497276652981LL;
 }
 
-static inline uint64_t fastrand(){
-  static __thread xorshift128_state_t  state;
+static inline uint64_t threadrand_128(){
+  static __thread xorshift128_state_t  state = (xorshift128_state_t){.s={0,0}};
+  if(UNLIKELY(!state.s[0]&&!state.s[1])){
+    state.s[0] = (uint64_t)&state;
+    state.s[1] = get_timestamp();
+    xorshift128plus(&state);
+  }
   return xorshift128plus(&state);
+}
+static inline uint64_t threadrand_1024(){
+  static __thread xorshift1024_state_t state = (xorshift1024_state_t){.s={0}};
+  static __thread bool initialized = false;
+  if(UNLIKELY(!initialized)){
+    for(int i = 0; i< 16; i++)
+      state.s[i] = threadrand_128();
+  }
+  return xorshift1024star(&state);
 }
 #endif
