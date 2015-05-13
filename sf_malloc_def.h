@@ -62,14 +62,13 @@
 ////////////////////////////////////////////////////////////////////////////
 #define PAGE_SIZE           (1 << PAGE_SHIFT)
 #define MAX_SIZE            (8u * PAGE_SIZE)
-#define ALIGNMENT           8
+#define ALIGNMENT           16
 #define NUM_CLASSES         126
 #define MAX_SMALL_SIZE      1024
 #define CLASS_ARRAY_SIZE    ((((1<<PAGE_SHIFT)*8u + 127 + (120<<7)) >> 7) + 1)
 #define NUM_PB_CACHE_WAY    8
-
 /* NUM_PAGE_CLASSES should be less than 256. */
-#define NUM_PAGE_CLASSES    62
+#define NUM_PAGE_CLASSES    126
 //#define NUM_PAGE_CLASSES    126
 //#define NUM_PAGE_CLASSES    254
 
@@ -103,19 +102,15 @@
 //       However, index is slightly different.
 typedef struct {
   uint8_t class_array[CLASS_ARRAY_SIZE];
-
   struct {
     // Mapping from size class to max size storable in that class
     uint32_t class_to_size;
-
     // Mapping from size class to number of pages to allocate at a time
     uint16_t class_to_pages;
-
     // Mapping from size class to number of blocks in pbh
     uint16_t num_blocks_per_pbh;
   } info[NUM_CLASSES];
 } sizemap_t CACHE_LINE_ALIGN;
-
 
 //-------------------------------------------------------------------
 // PageMap: mapping from page number (id) to pbh
@@ -138,8 +133,6 @@ typedef struct {
 typedef struct {
   pagemap_node_t* node[PMAP_INTERIOR_LEN];
 } pagemap_t CACHE_LINE_ALIGN;
-
-
 //-------------------------------------------------------------------
 // Type for Superpage and Superpage Header (SPH)
 //-------------------------------------------------------------------
@@ -152,10 +145,8 @@ typedef union {
   };
   uint64_t with;
 } ownermark_t __attribute__ ((aligned(8)));
-
 #define NONE            0
 #define DO_NOT_FINISH   1
-
 typedef struct sph {
   struct sph* next;            // next pointer in linked list
   struct sph* prev;            // prev pointer in linked list
@@ -164,14 +155,10 @@ typedef struct sph {
   void*       remote_pb_list;  // remote list for large blocks 
   uint32_t    hazard_mark;
 } sph_t;
-
-
 //-------------------------------------------------------------------
 // Type for Hazard Pointer
 //-------------------------------------------------------------------
 typedef struct hazard_ptr hazard_ptr_t;
-
-
 //-------------------------------------------------------------------
 // Type for Page Block Header (PBH)
 //-------------------------------------------------------------------
@@ -183,13 +170,11 @@ typedef union {
   };
   uint64_t together;
 } remote_list_t __attribute__ ((aligned(8)));
-
 typedef struct pbh pbh_t  CACHE_LINE_ALIGN;
 struct pbh {
   pbh_t*   next;          // next pointer in linked list
   pbh_t*   prev;          // prev pointer in linked list
   size_t   start_page;    // starting page number
-
   uint8_t  length;        // number of pages in pbh
   uint8_t  index;         // position(index) in superpage
   uint8_t  sizeclass;     // size-calss for small blocks
@@ -198,20 +183,15 @@ struct pbh {
   uint32_t cnt_unused;    // number of unused free blocks    
   uint16_t page_color;    // for page coloring
   uint16_t block_color;   // for block coloring
-
   void*    free_list;     // pointer to the first free block
   void*    unallocated;   // pointer to the first unused free block
-
-  volatile remote_list_t  remote_list;   // for remote free
+  volatile remote_list_t  remote_list ;   // for remote free
 };
-
 enum {
   PBH_ON_FREE_LIST,
   PBH_IN_USE,
   PBH_AGAINST_FALSE_SHARING
 };
-
-
 //-------------------------------------------------------------------
 // Block List
 //-------------------------------------------------------------------
@@ -223,31 +203,25 @@ typedef struct {
   uint32_t cnt_unused;      // number of unallocated blocks
   pbh_t*   pbh_list;        // list of PBs that are used in this class
 } blk_list_t;
-
-
 //-------------------------------------------------------------------
 // Page Block Cache
 //-------------------------------------------------------------------
 // This is an 8-way associative cache using pseudo-lru replacement algorithm.
 typedef char v8qi __attribute__ ((vector_size (8)));
-
 typedef union {
   v8qi v;
   char e[8];
 } char8_t;
-
 #ifdef MALLOC_USE_PAGE_BLOCK_CACHE
 typedef struct {
   void*  data;
   size_t length;
 } pb_cache_block_t;
-
 typedef struct {
   pb_cache_block_t block[NUM_PB_CACHE_WAY];
   char8_t          tag;
   uint8_t          state;   // LRU state
 } pb_cache_t;
-
 #define NUM_LRU_TABLE_ENTRY   128
 const uint8_t g_lru_table[NUM_LRU_TABLE_ENTRY] CACHE_LINE_ALIGN = {
   0, 4, 2, 4, 0, 6, 2, 6, 1, 4, 2, 4, 1, 6, 2, 6, 
@@ -259,12 +233,10 @@ const uint8_t g_lru_table[NUM_LRU_TABLE_ENTRY] CACHE_LINE_ALIGN = {
   0, 5, 2, 5, 0, 7, 2, 7, 1, 5, 2, 5, 1, 7, 2, 7, 
   0, 5, 3, 5, 0, 7, 3, 7, 1, 5, 3, 5, 1, 7, 3, 7
 };
-
 typedef struct {
   uint8_t mask;
   uint8_t set_bit;
 } way_table_t;
-
 const way_table_t g_way_table[NUM_PB_CACHE_WAY] = {
   {0x74, 0xB},
   {0x74, 0x3},
@@ -276,8 +248,6 @@ const way_table_t g_way_table[NUM_PB_CACHE_WAY] = {
   {0x3A, 0x0}
 };
 #endif
-
-
 //-------------------------------------------------------------------
 // Thread Local Heap (TLH)
 //-------------------------------------------------------------------
@@ -291,15 +261,11 @@ typedef struct {
   pb_cache_t    pb_cache;       // Page Block Cache
 #endif
   uint32_t      thread_id;
-
 #ifdef MALLOC_USE_PAGE_COLORING
   char8_t       pagecolor_cache;
   uint8_t       pagecolor_state;
 #endif
 } tlh_t CACHE_LINE_ALIGN;
-
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Macro Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -310,38 +276,27 @@ typedef struct {
 #define SET_NEXT(p,n)     *(uintptr_t*)(p) = (uintptr_t)(n)
 #define GET_PAGE_LEN(s)   \
   (((s) >> PAGE_SHIFT) + (((s) & (PAGE_SIZE - 1)) != 0 ? 1 : 0))
-
 #define MIN(a,b)  (((a) < (b)) ? (a) : (b))
 #define MAX(a,b)  (((a) > (b)) ? (a) : (b))
-
 #define LIKELY(x)   __builtin_expect(x, 1)
 #define UNLIKELY(x) __builtin_expect(x, 0)
 #define TID()       l_tlh.thread_id
-
-
 #define CRASH(fmt,...)    \
   fprintf(stderr, "%s:%d: "fmt, __FILE__, __LINE__, __VA_ARGS__); \
   exit(EXIT_FAILURE)
-
 #define HANDLE_ERROR(msg) \
   do { perror(msg); exit(EXIT_FAILURE); } while (0)
-
 #define HANDLE_ERROR_EN(en,msg) \
   do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0) 
-
-
 #ifdef MALLOC_DEBUG
 #define LOG(fmt,...)    fprintf(stdout,fmt,__VA_ARGS__); fflush(stdout)
 #else  //MALLOC_DEBUG
 #define LOG(fmt,...)
 #endif //MALLOC_DEBUG
-
 #ifdef MALLOC_DEBUG_DETAIL
 #define LOG_D(fmt,...)    fprintf(stdout,fmt,__VA_ARGS__); fflush(stdout)
 #else  //MALLOC_DEBUG_DETAIL
 #define LOG_D(fmt,...)
 #endif //MALLOC_DEBUG_DETAIL
-
-
 #endif //__SF_MALLOC_DEF_H__
 

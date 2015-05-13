@@ -64,7 +64,6 @@
 #include "sf_malloc_hazard.h"
 #include <assert.h>
 
-
 ////////////////////////////////////////////////////////////////////////////
 // Internal Data
 ////////////////////////////////////////////////////////////////////////////
@@ -230,84 +229,59 @@ void print_block_list(void* block);
 /* Initialize data structures for sf_malloc library. */
 void sf_malloc_init() {
   // Only the main thread can initialize the sf_malloc library.
-  if (g_initialized) return;
-  g_initialized = 1;
-
+  if (atomic_xchg_uint(&g_initialized,1)) return;
 #ifdef MALLOC_DEBUG
   if (PBH_SIZE != CACHE_LINE_SIZE) {
     CRASH("PBH size (%lu) != cache line size (%u)\n",
           PBH_SIZE, CACHE_LINE_SIZE);
   }
 #endif
-
   // Initialize thread local heap.
   tlh_init();
-
   // Initialize data structures.
   debug_init();
   sizemap_init();
   pagemap_init();
   stats_init();
-
   // Create a thread key to call the destructor.
   if (pthread_key_create(&g_thread_key, sf_malloc_destructor)) {
     HANDLE_ERROR("pthread_key_create");
   }
-
 #ifdef MALLOC_USE_STATIC_LINKING
   // Register the exit function.
   if (atexit(sf_malloc_exit)) {
     HANDLE_ERROR("atexit");
   }
 #endif
-
   LOG_D("[T%u] sf_malloc_init(): TLH=%p\n", TID(), &l_tlh);
 }
-
-
 /* Initialize thread-private data structures. */
 void sf_malloc_thread_init() {
   // Initialize thread local heap.
   tlh_init();
-
-  if (pthread_setspecific(g_thread_key, (void*)&l_tlh)) {
-    HANDLE_ERROR("pthread_setspecific");
-  }
-
+  if (pthread_setspecific(g_thread_key, (void*)&l_tlh)) {HANDLE_ERROR("pthread_setspecific");}
   LOG_D("[T%u] INIT: TLH=%p\n", TID(), &l_tlh);
 }
-
-
 /* Finalize the sf_malloc library. */
 void sf_malloc_exit() {
-  if (g_initialized == 0) return;
-  g_initialized = 0;
-
+  if (!atomic_xchg_uint(&g_initialized,0)) return;
   LOG_D("[T%u] sf_malloc_exit()\n", TID());
   print_stats();
   malloc_stats();
 }
-
-
 /* Finalize thread-private data structures. */
 void sf_malloc_thread_exit() {
   tlh_t* tlh = &l_tlh;
   if (tlh->thread_id == DEAD_OWNER) return;
-
   // Clear thread-local heap.
   tlh_clear(&l_tlh);
-
   LOG_D("[T%u] EXIT\n", TID());
   print_stats();
-
   // Reset thread ID
   tlh->thread_id = DEAD_OWNER;
-
   // Decrease the number of currently running threads.
   atomic_dec_int((volatile int*)&g_thread_num);
 }
-
-
 void sf_malloc_destructor(void* val) {
   sf_malloc_thread_exit();
   pthread_setspecific(g_thread_key, NULL);
@@ -1166,8 +1140,7 @@ static inline pbh_t* pbh_list_pop(pbh_t** list) {
 
 static inline void pbh_list_remove(pbh_t** list, pbh_t* pbh) {
   if (pbh == pbh->next) {
-    assert(*list == pbh);
-    *list = NULL;
+    if(*list == pbh); *list = NULL;
   } else {
     if (*list == pbh) *list = pbh->next;
     pbh->prev->next = pbh->next;
@@ -2172,6 +2145,11 @@ static inline void *sf_realloc(void *ptr, size_t size) {
     if(size>MAX_SIZE && old_size > MAX_SIZE){
       size_t old_len = GET_PAGE_LEN(old_size)*PAGE_SIZE;
       size_t new_len = GET_PAGE_LEN(size)    *PAGE_SIZE;
+      if(new_len <=old_len){
+        do_madvise(ptr + new_len,old_len-new_len);
+        realloc_timer_stop();
+        return ptr;
+      }
       ret = do_mremap(ptr,old_len,NULL, new_len);
       size_t page_id = (size_t)ptr>> PAGE_SHIFT;
       pagemap_set(page_id, NULL);
@@ -2179,7 +2157,8 @@ static inline void *sf_realloc(void *ptr, size_t size) {
       void* val = (void*)(size | HUGE_MALLOC_MARK);
       pagemap_expand(page_id, 1);
       pagemap_set(page_id,val);
-  
+      realloc_timer_stop();
+      return ret; 
     }
     ret = sf_malloc(size);
     memmove(ret, ptr, ((old_size < size) ? old_size : size));

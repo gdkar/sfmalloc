@@ -45,15 +45,13 @@
  */
 
 extern "C" {
-#include "sf_malloc_internal.h"
+  #include "sf_malloc_internal.h"
 }
-
 class SFMallocInit {
 public:
   SFMallocInit() {
     sf_malloc_init();
   }
-
   ~SFMallocInit() {
     sf_malloc_exit();
   }
