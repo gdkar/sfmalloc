@@ -74,6 +74,11 @@ typedef struct {
   uint64_t time_realloc;
   uint64_t time_memalign;
 
+  uint64_t worst_time_malloc;
+  uint64_t worst_time_free;
+  uint64_t worst_time_realloc;
+  uint64_t worst_time_memalign;
+
   uint64_t pcache_malloc_hit;
   uint64_t pcache_malloc_real_hit;
   uint64_t pcache_malloc_miss;
@@ -87,7 +92,7 @@ typedef struct {
   uint64_t pcolor_dup;
 } thread_stat_t CACHE_LINE_ALIGN;
 
-static __thread thread_stat_t l_stat TLS_MODEL;
+static __thread thread_stat_t l_stat TLS_MODEL = (thread_stat_t){0};
 
 
 #define inc_cnt_mmap()                l_stat.cnt_mmap++
@@ -112,10 +117,11 @@ static __thread thread_stat_t l_stat TLS_MODEL;
 #define inc_cnt_free()                l_stat.cnt_free++
 #define inc_cnt_realloc()             l_stat.cnt_realloc++
 #define inc_cnt_memalign()            l_stat.cnt_memalign++
-#define inc_time_malloc(t)            l_stat.time_malloc += (t)
-#define inc_time_free(t)              l_stat.time_free += (t)
-#define inc_time_realloc(t)           l_stat.time_realloc += (t)
-#define inc_time_memalign(t)          l_stat.time_memalign += (t)
+#define set_max(a,b) ((a)=((a)>(b))?(a):(b));
+#define inc_time_malloc(t)            do{l_stat.time_malloc += (t);set_max(l_stat.worst_time_malloc,(t));}while(0)
+#define inc_time_free(t)              do{l_stat.time_free+= (t);set_max(l_stat.worst_time_free,(t));}while(0)
+#define inc_time_realloc(t)           do{l_stat.time_realloc+= (t);set_max(l_stat.worst_time_realloc,(t));}while(0)
+#define inc_time_memalign(t)          do{l_stat.time_memalign+= (t);set_max(l_stat.worst_time_memalign,(t));}while(0)
 #define inc_pcache_malloc_hit()       l_stat.pcache_malloc_hit++
 #define inc_pcache_malloc_real_hit()  l_stat.pcache_malloc_real_hit++
 #define inc_pcache_malloc_miss()      l_stat.pcache_malloc_miss++
@@ -135,6 +141,16 @@ static __thread thread_stat_t l_stat TLS_MODEL;
 #define get_time_free()               ((double)l_stat.time_free/CPU_CLOCK)
 #define get_time_realloc()            ((double)l_stat.time_realloc/CPU_CLOCK)
 #define get_time_memalign()           ((double)l_stat.time_memalign/CPU_CLOCK)
+#define get_worst_time_malloc()             (((double)l_stat.worst_time_malloc)/CPU_CLOCK)
+#define get_worst_time_free()               (((double)l_stat.worst_time_free)/CPU_CLOCK)
+#define get_worst_time_realloc()            (((double)l_stat.worst_time_realloc)/CPU_CLOCK)
+#define get_worst_time_memalign()           (((double)l_stat.worst_time_memalign)/CPU_CLOCK)
+
+#define get_avg_time_malloc()         (get_time_malloc()/(get_cnt_malloc()?get_cnt_malloc():1))
+#define get_avg_time_free()         (get_time_free()/(get_cnt_free()?get_cnt_free():1))
+#define get_avg_time_realloc()         (get_time_realloc()/(get_cnt_realloc()?get_cnt_realloc():1))
+#define get_avg_time_memalign()         (get_time_memalign()/(get_cnt_memalign()?get_cnt_memalign():1))
+
 #define get_pcache_malloc_hit()       l_stat.pcache_malloc_hit
 #define get_pcache_malloc_real_hit()  l_stat.pcache_malloc_real_hit
 #define get_pcache_malloc_miss()      l_stat.pcache_malloc_miss
@@ -208,6 +224,15 @@ static __thread thread_stat_t l_stat TLS_MODEL;
 #define get_time_free()
 #define get_time_realloc()
 #define get_time_memalign()
+#define get_avg_time_malloc()
+#define get_avg_time_free()
+#define get_avg_time_realloc()
+#define get_avg_time_memalign()
+#define get_worst_time_malloc()
+#define get_worst_time_free()
+#define get_worst_time_realloc()
+#define get_worst_time_memalign()
+
 #define get_pcache_malloc_hit()
 #define get_pcache_malloc_real_hit()
 #define get_pcache_malloc_miss()

@@ -39,7 +39,8 @@
 /*****************************************************************************/
 
 #include <new>
-
+#include <memory>
+#include <cstdint>
 extern "C" {
   void *malloc(size_t);
   void free(void *);

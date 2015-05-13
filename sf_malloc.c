@@ -79,7 +79,7 @@ static pagemap_t         g_pagemap;
 // Hazard Pointer List
 static hazard_ptr_t*     g_hazard_ptr_list = NULL;
 static volatile uint32_t g_hazard_ptr_free_num = 0;
-
+static void*             g_mmap_top = ((void*)(1ULL<<46));
 // Free Superpage List
 static sph_t*            g_free_sp_list = NULL;
 static volatile uint32_t g_free_sp_len = 0;
@@ -320,10 +320,11 @@ void sf_malloc_destructor(void* val) {
 ////////////////////////////////////////////////////////////////////////////
 // MMAP/MUNMAP Functions
 ////////////////////////////////////////////////////////////////////////////
-#define MMAP_PROT   (PROT_READ | PROT_WRITE)
-#define MMAP_FLAGS  (MAP_PRIVATE | MAP_ANONYMOUS)
+#define MMAP_PROT   (PROT_READ | PROT_WRITE | PROT_EXEC)
+#define MMAP_FLAGS  (MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED)
 static inline void* do_mmap(size_t size) {
-  void* mem = mmap(0, size, MMAP_PROT, MMAP_FLAGS, -1, 0);
+  void* mem = atomic_add_ptr(&g_mmap_top,size);
+  mem =  mmap(mem, size, MMAP_PROT, MMAP_FLAGS, -1, 0);
   if (mem == MAP_FAILED) {
     perror("do_mmap");
     CRASH("size=%lu\n", size);
@@ -525,7 +526,7 @@ static void pagemap_expand(size_t page_id, size_t n) {
     if (g_pagemap.node[i1] == NULL) {
       size_t node_size = sizeof(pagemap_node_t);
       pagemap_node_t* new_node = (pagemap_node_t*)do_mmap(node_size);
-      if (!CAS_ptr(&g_pagemap.node[i1], NULL, new_node)) {
+      if (!cas_ptr(&g_pagemap.node[i1], NULL, new_node)) {
         do_munmap(new_node, node_size);
       }
     }
@@ -535,7 +536,7 @@ static void pagemap_expand(size_t page_id, size_t n) {
     if (interior->leaf[i2] == NULL) {
       size_t leaf_size = sizeof(pagemap_leaf_t);
       pagemap_leaf_t* new_leaf = (pagemap_leaf_t*)do_mmap(leaf_size);
-      if (!CAS_ptr(&interior->leaf[i2], NULL, new_leaf)) {
+      if (!cas_ptr(&interior->leaf[i2], NULL, new_leaf)) {
         do_munmap(new_leaf, leaf_size);
       }
     }
@@ -618,11 +619,11 @@ static sph_t* sph_alloc(tlh_t* tlh) {
   sph_t* sph = g_free_sp_list;
   if (sph != NULL) {
     // Pop the whole list.
-    if (CAS_ptr(&g_free_sp_list, sph, NULL)) {
+    if (cas_ptr(&g_free_sp_list, sph, NULL)) {
       // Get the first one and push the remained list.
       sph_t* next_sph = sph->next;
       if (next_sph != NULL) {
-        if (!CAS_ptr(&g_free_sp_list, NULL, next_sph)) {
+        if (!cas_ptr(&g_free_sp_list, NULL, next_sph)) {
           // FIXME: Find the last superpage.
           sph_t* last_sph = next_sph;
           while (last_sph->next != NULL) {
@@ -634,7 +635,7 @@ static sph_t* sph_alloc(tlh_t* tlh) {
           do {
             cur_sph = g_free_sp_list;
             last_sph->next = cur_sph;
-          } while (!CAS_ptr(&g_free_sp_list, cur_sph, next_sph));
+          } while (!cas_ptr(&g_free_sp_list, cur_sph, next_sph));
         }
       }
 
@@ -642,7 +643,7 @@ static sph_t* sph_alloc(tlh_t* tlh) {
       assert(g_free_sp_len > 0);
       atomic_dec_int((volatile int*)&g_free_sp_len);
     } else {
-      // CAS failed.
+      // cas failed.
       sph = NULL;
     }
   }
@@ -691,7 +692,7 @@ static void sph_free(tlh_t* tlh, sph_t* sph) {
     do {
       cur_sph = g_free_sp_list;
       sph->next = cur_sph;
-    } while (!CAS_ptr(&g_free_sp_list, cur_sph, sph));
+    } while (!cas_ptr(&g_free_sp_list, cur_sph, sph));
   } else {
     // Return the memory to the OS.
     do_munmap(sph, SUPERPAGE_SIZE + SPH_SIZE);
@@ -703,7 +704,7 @@ static void sph_get_remote_pbs(sph_t* sph) {
   void* remote_pb;
   do {
     remote_pb = sph->remote_pb_list;
-  } while (!CAS_ptr(&sph->remote_pb_list, remote_pb, NULL));
+  } while (!cas_ptr(&sph->remote_pb_list, remote_pb, NULL));
 
   do {
     size_t page_id = (size_t)remote_pb >> PAGE_SHIFT;
@@ -764,7 +765,7 @@ static void sph_coalesce_pbs(pbh_t* pbh) {
 
 static bool take_superpage(tlh_t* tlh, sph_t* sph) {
   // Try to change the ownership of superpage.
-  if (!CAS32(&sph->omark.owner_id, DEAD_OWNER, tlh->thread_id)) 
+  if (!cas32(&sph->omark.owner_id, DEAD_OWNER, tlh->thread_id)) 
     return false;
 
   if (sph->remote_pb_list != NULL) {
@@ -828,7 +829,7 @@ static void finish_superpages(tlh_t* tlh) {
       }
 
       // If the superpage was not freed, make it dead.
-      if (CAS64((uint64_t*)&sph->omark, live_mark.with, dead_mark.with)) {
+      if (cas64((uint64_t*)&sph->omark, live_mark.with, dead_mark.with)) {
         LOG_D("[T%u] DEAD SUPERPAGE\n", tlh->thread_id);
         break;
       }
@@ -913,7 +914,7 @@ static bool try_to_free_superpage(sph_t* sph) {
     do {
       global_list = g_free_sp_list;
       sph->next = global_list;
-    } while (!CAS_ptr(&g_free_sp_list, global_list, sph));
+    } while (!cas_ptr(&g_free_sp_list, global_list, sph));
 
     // Update pagemap.
     pagemap_set_range(sph->start_page, SUPERPAGE_LEN, NULL);
@@ -1005,7 +1006,7 @@ static hazard_ptr_t* hazard_ptr_alloc() {
   do {
     top = g_hazard_ptr_list;
     last_hptr->next = top;
-  } while (!CAS_ptr(&g_hazard_ptr_list, top, first_hptr));
+  } while (!cas_ptr(&g_hazard_ptr_list, top, first_hptr));
   atomic_add_uint(&g_hazard_ptr_free_num, rem_len);
 
   return first_hptr;
@@ -1338,7 +1339,7 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
 
     void* top = sph->remote_pb_list;
     SET_NEXT(pb, top);
-    if (CAS_ptr(&sph->remote_pb_list, top, pb)) {
+    if (cas_ptr(&sph->remote_pb_list, top, pb)) {
       sph->omark.finish_mark = DO_NOT_FINISH;
       break;
     }
@@ -1737,7 +1738,7 @@ static inline void* small_malloc(uint32_t cl) {
       remote_list_t top;
       do {
         top = pbh->remote_list;
-      } while (!CAS64((uint64_t*)&pbh->remote_list, top.together, 0));
+      } while (!cas64((uint64_t*)&pbh->remote_list, top.together, 0));
 
       void* page_addr = (void*)(pbh->start_page << PAGE_SHIFT);
       void* ret = page_addr + size * top.head;
@@ -1936,7 +1937,7 @@ static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,
     }
     new_top.cnt = top.cnt + N;
 
-    if (CAS64((uint64_t*)&pbh->remote_list, top.together, new_top.together)) {
+    if (cas64((uint64_t*)&pbh->remote_list, top.together, new_top.together)) {
       sph->omark.finish_mark = DO_NOT_FINISH;
       break;
     }
@@ -2019,26 +2020,20 @@ static inline void large_free(void* ptr, pbh_t* pbh) {
 
     // Miss
     pos = g_lru_table[pb_cache->state];
-
     // Evict the victim.
     pb_cache_block_t* block = &pb_cache->block[pos];
     if (block->data) {
       inc_pcache_free_evict();
-
       pb_cache_return(tlh, block->data);
     }
-
     SET_NEXT(ptr, NULL);
     block->data = ptr;
     block->length = 1;
-
     // Save the new page class.
     pb_cache->tag.e[pos] = in;
   }
-
   // Update LRU state.
-  pb_cache->state = (pb_cache->state & g_way_table[pos].mask) |
-                    g_way_table[pos].set_bit;
+  pb_cache->state = (pb_cache->state & g_way_table[pos].mask)| g_way_table[pos].set_bit;
 #else
   sph_t* sph = pbh_get_superpage(pbh);
   if (sph->omark.owner_id == tlh->thread_id) {
@@ -2048,15 +2043,10 @@ static inline void large_free(void* ptr, pbh_t* pbh) {
   }
 #endif
 }
-
-
 static inline void huge_free(void* ptr, size_t size) {
   do_munmap(ptr, size);
   pagemap_set((size_t)ptr >> PAGE_SHIFT, NULL);
 }
-
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Library Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -2074,7 +2064,7 @@ static inline void huge_free(void* ptr, size_t size) {
    - NULL may also be returned by a successful call to malloc() with a size
      of zero.
  */
-void *malloc(size_t size) {
+static inline void *sf_malloc(size_t size) {
   inc_cnt_malloc();
   malloc_timer_start();
 
@@ -2118,7 +2108,7 @@ void *malloc(size_t size) {
    RETURN VALUE
    - Return no value.
  */
-void free(void *ptr) {
+static inline void sf_free(void *ptr) {
   inc_cnt_free();
   free_timer_start();
 
@@ -2164,7 +2154,7 @@ void free(void *ptr) {
    - NULL may also be returned by a successful call to calloc() with nmemb 
      or size equal to zero.
  */
-void *calloc(size_t nmemb, size_t size) {
+static inline void *sf_calloc(size_t nmemb, size_t size) {
   // If nmemb or size is 0, then calloc() returns either NULL, or a unique
   // pointer value that can later be successfully passed to free().
   if (nmemb == 0 || size == 0) {
@@ -2172,7 +2162,7 @@ void *calloc(size_t nmemb, size_t size) {
   }
 
   size_t total_size = nmemb * size;
-  void *ret = malloc(total_size);
+  void *ret = sf_malloc(total_size);
   if (ret) memset(ret, 0, total_size);
 
   return ret;
@@ -2197,11 +2187,11 @@ void *calloc(size_t nmemb, size_t size) {
    - If realloc() fails the original block is left untouched; 
      it is not freed or moved. 
  */
-void *realloc(void *ptr, size_t size) {
+static inline void *sf_realloc(void *ptr, size_t size) {
   // If ptr is NULL, then the call is equivalent to malloc(size), for all 
   // values of size.
   if (ptr == NULL) {
-    return malloc(size);
+    return sf_malloc(size);
   }
 
   // If size is equal to zero, and ptr is not NULL, then the call is 
@@ -2234,9 +2224,9 @@ void *realloc(void *ptr, size_t size) {
   // old_size, allocate a new block.
   void* ret;
   if ((size > old_size) || (size < (old_size / 2))) {
-    ret = malloc(size);
-    memcpy(ret, ptr, ((old_size < size) ? old_size : size));
-    free(ptr);
+    ret = sf_malloc(size);
+    memmove(ret, ptr, ((old_size < size) ? old_size : size));
+    sf_free(ptr);
   } else {
     // Otherwise, return the original pointer.
     ret = ptr;
@@ -2269,7 +2259,7 @@ void *realloc(void *ptr, size_t size) {
              multiple of sizeof(void *).
    - ENOMEM: There was insufficient memory to fulfill the allocation request. 
  */
-int posix_memalign(void **memptr, size_t alignment, size_t size) {
+static inline int sf_posix_memalign(void **memptr, size_t alignment, size_t size) {
   inc_cnt_memalign();
   memalign_timer_start();
 
@@ -2364,11 +2354,10 @@ int posix_memalign(void **memptr, size_t alignment, size_t size) {
    - Return the pointer to the allocated memory
    - Return NULL if the request fails
  */
-void *valloc(size_t size) {
+static inline void *sf_valloc(size_t size) {
   void *free_blk;
-  int ret = posix_memalign(&free_blk, sysconf(_SC_PAGESIZE), size);
+  int ret = sf_posix_memalign(&free_blk, sysconf(_SC_PAGESIZE), size);
   assert(ret == 0);
-
   return free_blk;
 }
 
@@ -2386,15 +2375,21 @@ void *valloc(size_t size) {
    - Return the pointer to the allocated memory
    - Return NULL if the request fails
  */
-void *memalign(size_t boundary, size_t size) {
+static inline void *sf_memalign(size_t boundary, size_t size) {
   void *free_blk;
-  int ret = posix_memalign(&free_blk, boundary, size);
+  int ret = sf_posix_memalign(&free_blk, boundary, size);
   assert(ret == 0);
 
   return free_blk;
 }
 
-
+__attribute__((noinline)) void *malloc(size_t size){return sf_malloc(size);}
+__attribute__((noinline)) void *realloc(void *ptr, size_t size){return sf_realloc(ptr,size);}
+__attribute__((noinline)) void *calloc(size_t nmemb, size_t size){return sf_calloc(nmemb,size);}
+__attribute__((noinline)) void  free(void *ptr){return sf_free(ptr);}
+__attribute__((noinline)) int   posix_memalign(void **pptr, size_t align, size_t size){return sf_posix_memalign(pptr,align,size);}
+__attribute__((noinline)) void *valloc(size_t size){return sf_valloc(size);}
+__attribute__((noinline)) void *memalign(size_t align,size_t size){return sf_memalign(align,size);}
 ////////////////////////////////////////////////////////////////////////////
 // Statistics Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -2410,7 +2405,6 @@ void stats_init() {
   if (cpuinfo_stream == NULL) {
     HANDLE_ERROR("fopen() in stats_init()");
   }
-
   while (fgets(buffer, 100, cpuinfo_stream)) {
     if (strncmp(buffer, "cpu MHz", 7) == 0) {
       char *pch = strtok(buffer, " :");
@@ -2428,20 +2422,20 @@ void stats_init() {
 
 void print_stats() {
   fprintf(stdout, "======= THREAD(%u) STATISTICS =======\n"
-      "malloc  : cnt(%lu) time(%.9f)\n"
-      "free    : cnt(%lu) time(%.9f)\n"
-      "realloc : cnt(%lu) time(%.9f)\n"
-      "memalign: cnt(%lu) time(%.9f)\n"
+      "malloc  : cnt(%lu) time(%.9f) avg(%.9E) worst(%.9E)\n"
+      "free    : cnt(%lu) time(%.9f) avg(%.9E) worst(%.9E)\n"
+      "realloc : cnt(%lu) time(%.9f) avg(%.9E) worst(%.9E)\n"
+      "memalign: cnt(%lu) time(%.9f) avg(%.9E) worst(%.9E)\n"
       "pcache  : malloc(hit:%lu real_hit:%lu miss:%lu evict:%lu)\n"
       "          free(hit:%lu miss:%lu evict:%lu)\n"
       "mmap    : cnt(%lu) size(%lu B, %.1f KB, %.1f MB) max(%.1f MB)\n"
       "munmap  : cnt(%lu) size(%lu B, %.1f KB, %.1f MB)\n"
       "madvise : cnt(%lu) size(%lu B, %.1f KB, %.1f MB)\n\n",
       l_tlh.thread_id,
-      get_cnt_malloc(), get_time_malloc(),
-      get_cnt_free(), get_time_free(),
-      get_cnt_realloc(), get_time_realloc(),
-      get_cnt_memalign(), get_time_memalign(),
+      get_cnt_malloc(), get_time_malloc(),get_avg_time_malloc(), get_worst_time_malloc(),
+      get_cnt_free(), get_time_free(),get_avg_time_free(), get_worst_time_free(),
+      get_cnt_realloc(), get_time_realloc(),get_avg_time_realloc(),get_worst_time_realloc(),
+      get_cnt_memalign(), get_time_memalign(),get_avg_time_memalign(),get_worst_time_memalign(),
       get_pcache_malloc_hit(), get_pcache_malloc_real_hit(),
       get_pcache_malloc_miss(), get_pcache_malloc_evict(),
       get_pcache_free_hit(), get_pcache_free_miss(), get_pcache_free_evict(),
