@@ -1,5 +1,6 @@
 #include "sf_malloc_hazard.h"
 #include "sf_malloc_asm.h"
+#include "sf_malloc_util.h"
 #include <alloca.h>
 #include <string.h>
 #include <stdatomic.h>
@@ -73,60 +74,25 @@ bool _hazard_ptr_scan_single(void* sph) {
   }
   return false;
 }
-inline static uint64_t mmh3mod(uint64_t key){
-  key ^= (key>> 31);
-  key *= 0x7fb5d329728ea185;
-  key ^= (key>> 27);
-  key *= 0x81dadef4bc2dd44d;
-  key ^= (key>> 33);
-  return key;
-}
-static void _hash_insert(uint64_t *table, uint32_t size, uint64_t value){
-  const uint32_t mask =size-1;
-  const uint32_t hash = mmh3mod(value)&mask;
-  for(uint32_t offset = 0; offset < size; offset++){
-    const uint32_t index = (hash+offset)&mask;
-    if(!table[index] || table[index]==value){
-      table[index] = value;
-      return;
-    }
-  }
-}
-#define hash_insert(_t,_s,_v) _hash_insert(_t,(uint32_t)_s,(uint64_t)_v)
-static bool _hash_lookup(uint64_t *table, uint32_t size, uint64_t value){
-  const uint32_t mask = size-1;
-  const uint32_t hash = mmh3mod(value)&mask;
-  for(uint32_t offset = 0; offset < size; offset++){
-    const uint32_t index= (hash+offset)&mask;
-    if(!table[index]) return false;
-    else if(table[index] == value) return true;
-  }
-  return false;
-}
-#define hash_lookup(_t, _s, _v) _hash_lookup(_t,(uint32_t)_s,(uint64_t)_v)
+
 void hazard_ptr_scan(hazard_ptr_t *myhp){
   myhp->count = 0;
   uint32_t hash_size = 16 * g_thread_num -1;
-  hash_size |= hash_size>>1;
-  hash_size |= hash_size>>2;
-  hash_size |= hash_size>>4;
-  hash_size |= hash_size>>8;
-  hash_size |= hash_size>>16;
-  hash_size++;
+  hash_size = next_pow_2(hash_size);
   uint64_t  *storage = (uint64_t*)alloca(sizeof(uint64_t)*hash_size);
   memset(storage,0,sizeof(uint64_t)*hash_size);
   for(hazard_ptr_t *hp = g_hazard_list.head; hp!=NULL; hp = hp->next){
     uint32_t count = hp->count;
     while(count){
       count--;
-      hash_insert(storage,hash_size,hp->node[count]);
+      ht64_insert(storage,hash_size,hp->node[count]);
     }
   }
   hazard_list_elem_t *new_dlist = 0;
   hazard_list_elem_t *old_dlist = myhp->dlist;
   myhp->dsize = 0;
   while(old_dlist){
-    if(hash_lookup(storage,hash_size,(uint64_t)old_dlist)){
+    if(ht64_lookup(storage,hash_size,(uint64_t)old_dlist)){
       myhp->dsize++;
       hazard_list_elem_t *elem = old_dlist;
       old_dlist                = elem->next;

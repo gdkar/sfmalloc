@@ -4,9 +4,9 @@ CXX     = g++
 AR      = ar
 RANLIB  = ranlib
 
-OBJS = sf_malloc.o sf_malloc_new.o sf_malloc_wrapper.o sf_malloc_hazard.o sf_malloc_init.o
-SHARED_OBJS = sf_malloc_shared.o sf_malloc_new_shared.o sf_malloc_init_shared.o sf_malloc_wrapper_shared.o sf_malloc_hazard_shared.o
-DEBUG_OBJS = sf_malloc_debug.o sf_malloc_new_debug.o sf_malloc_init_debug.o sf_malloc_wrapper_debug.o sf_malloc_hazard_debug.o
+OBJS = sf_malloc.o sf_malloc_new.o sf_malloc_wrapper.o sf_malloc_hazard.o sf_malloc_init.o sf_malloc_util.o
+SHARED_OBJS = sf_malloc_shared.o sf_malloc_new_shared.o sf_malloc_init_shared.o sf_malloc_wrapper_shared.o sf_malloc_hazard_shared.o sf_malloc_util_shared.o
+DEBUG_OBJS = sf_malloc_debug.o sf_malloc_new_debug.o sf_malloc_init_debug.o sf_malloc_wrapper_debug.o sf_malloc_hazard_debug.o sf_malloc_util_debug.o
 PREFIX = /usr/local
 LIBS = -lpthread -lrt -ldl
 LIB_MALLOC = $(addprefix .libs/,libsfmalloc.a libsfmalloc.so libsfmalloc-debug.so)
@@ -43,7 +43,8 @@ dirs:
 	$(CC) $(CFLAGS) -c $< -o $@
 .objs/sf_malloc_init.o: sf_malloc_init.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-
+.objs/sf_malloc_util.o: sf_malloc_util.c
+	$(CC) $(CFLAGS) -c $< -o $@
 .objs/sf_malloc_new.o: sf_malloc_new.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 .objs/%_shared.o: %.cpp
