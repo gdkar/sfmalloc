@@ -60,7 +60,6 @@
 #include "sf_malloc_ctrl.h"
 #include "sf_malloc_def.h"
 #include "sf_malloc_stat.h"
-#include "sf_malloc_atomic.h"
 #include "sf_malloc_hazard.h"
 #include "sf_malloc_asm.h"
 
@@ -112,7 +111,7 @@ void sf_malloc_init();
 void sf_malloc_thread_init();
 void sf_malloc_exit();
 void sf_malloc_thread_exit();
-void sf_malloc_destructor(void* val);
+void sf_malloc_destructor(void* );
 
 /* mmap/munmap */
 void* do_mmap(void*,size_t );
@@ -298,9 +297,8 @@ void sf_malloc_thread_exit() {
   // Decrease the number of currently running threads.
   atomic_fetch_add_explicit(&g_thread_num,-1,memory_order_relaxed);
 }
-
-
 void sf_malloc_destructor(void* val) {
+  (void)val;
   sf_malloc_thread_exit();
   pthread_setspecific(g_thread_key, NULL);
 }
@@ -1002,9 +1000,7 @@ static inline pbh_t* pbh_alloc(sph_t* sph, size_t page_id, size_t len) {
 
 
 /* Deallocate the pbh. */
-static inline void pbh_free(pbh_t* pbh) {
-  // Do nothing...
-}
+static inline void pbh_free(pbh_t* val) {(void)val;}
 
 
 static inline void pbh_add_blocks(tlh_t* tlh, pbh_t* pbh,
@@ -1417,7 +1413,6 @@ static void tlh_clear(tlh_t* tlh) {
     }
   }
 #endif
-
   for (uint32_t cl = 0; cl < NUM_CLASSES; cl++) {
     blk_list_t* b_list = &tlh->blk_list[cl];
 
@@ -1425,45 +1420,35 @@ static void tlh_clear(tlh_t* tlh) {
       assert(b_list->cnt_free > 0);
       tlh_return_list(tlh, cl);
     }
-    
     if (b_list->ptr_to_unused != NULL) {
       assert(b_list->cnt_unused > 0);
       tlh_return_unused(tlh, cl);
     }
-
     if (b_list->pbh_list != NULL) {
       tlh_return_pbhs(tlh, cl);
     }
   }
-
   // If there remains superpages, make them orphaned.
   if (tlh->sp_list != NULL) {
     finish_superpages(tlh);
   }
-
   // Deallocate the hazard pointer.
   hazard_ptr_free(tlh->hazard_ptr);
   tlh->hazard_ptr = NULL;
 }
-
-
 static void tlh_return_list(tlh_t* tlh, uint32_t cl) {
   blk_list_t* b_list = &tlh->blk_list[cl];
-
   void* list = b_list->free_blk_list;
   assert(list != NULL);
-
   void* prev_blk = list;
   void* curr_blk = GET_NEXT(list);
   void* blk_list = list;
   size_t prev_page_id = (size_t)list >> PAGE_SHIFT;
   pbh_t* blk_pbh = (pbh_t*)pagemap_get(prev_page_id);
   uint32_t cont_num = 1;
-
   // If contiguous blocks are in the same pbh, we will return them together.
   while (curr_blk != NULL) {
     size_t curr_page_id = (size_t)curr_blk >> PAGE_SHIFT;
-
     // Check curr_blk is in the same pbh with the previous block.
     if (curr_page_id == prev_page_id) {
       // Same --> continue
@@ -1477,7 +1462,6 @@ static void tlh_return_list(tlh_t* tlh, uint32_t cl) {
       } else {
         // Different --> Return to the pbh.
         pbh_add_blocks(tlh, blk_pbh, blk_list, prev_blk, cont_num);
-
         // Renew the start block.
         blk_list = curr_blk;
         blk_pbh = pbh;
@@ -1485,23 +1469,17 @@ static void tlh_return_list(tlh_t* tlh, uint32_t cl) {
         cont_num = 1;
       }
     }
-
     // Move to the next block.
     prev_blk = curr_blk;
     curr_blk = GET_NEXT(curr_blk);
   }
-
   // Return remained blocks.
   pbh_add_blocks(tlh, blk_pbh, blk_list, prev_blk, cont_num);
-
   b_list->free_blk_list = NULL;
   b_list->cnt_free  = 0;
 }
-
-
 static void tlh_return_unused(tlh_t* tlh, uint32_t cl) {
   blk_list_t* b_list = &tlh->blk_list[cl];
-  
   void* unallocated = b_list->ptr_to_unused;
   size_t page_id = (size_t)unallocated >> PAGE_SHIFT;
   pbh_t* pbh = (pbh_t*)pagemap_get(page_id);
@@ -1566,13 +1544,9 @@ static inline void pb_cache_return(tlh_t* tlh, void* pb) {
     } else {
       pb_remote_free(tlh, pb, pbh);
     }
-
     pb = next_pb;
   } while (pb != NULL);
 }
-
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Allocation/Deallocation Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -1582,19 +1556,16 @@ static inline void* bump_alloc(size_t size, blk_list_t* b_list) {
   // split all blocks in a cache line.
   if (size <= (CACHE_LINE_SIZE / 2)) {
     uint32_t blks_per_line = CACHE_LINE_SIZE / size;
-
     // Update the Free Block List.
     b_list->free_blk_list = ret + size;
     b_list->cnt_free = blks_per_line - 1;
-
     void* free_blk = b_list->free_blk_list;
-    for (int i = 2; i < blks_per_line; i++) {
+    for (uint32_t i = 2; i < blks_per_line; i++) {
       void* next_blk = free_blk + size;
       SET_NEXT(free_blk, next_blk);
       free_blk = next_blk;
     }
     SET_NEXT(free_blk, NULL);
-
     // Update the unallocated pointer.
     b_list->cnt_unused -= blks_per_line;
     b_list->ptr_to_unused = (b_list->cnt_unused > 0) ? (free_blk+size) : NULL;
@@ -1603,11 +1574,8 @@ static inline void* bump_alloc(size_t size, blk_list_t* b_list) {
     b_list->cnt_unused--;
     b_list->ptr_to_unused = (b_list->cnt_unused > 0) ? (ret + size) : NULL;
   }
-
   return ret;
 }
-
-
 /*
    Allocate a memory for small sizes.
    - size: byte size corresponding to the class cl
@@ -1616,21 +1584,17 @@ static inline void* bump_alloc(size_t size, blk_list_t* b_list) {
 static inline void* small_malloc(uint32_t cl) {
   tlh_t* tlh = &l_tlh;
   blk_list_t* b_list = &tlh->blk_list[cl];
-
   ////////////////////////////////////////////////////////////////////////
   // Case 1: When we have thread-local free list.
   ////////////////////////////////////////////////////////////////////////
   if (LIKELY(b_list->free_blk_list != NULL)) {
     assert(b_list->cnt_free > 0);
-
     // Pop the first free block.
     void* ret = b_list->free_blk_list;
     b_list->free_blk_list = GET_NEXT(ret);
     b_list->cnt_free--;
-
     return ret;
   }
-
   ////////////////////////////////////////////////////////////////////////
   // Case 2: When we have the unallocated chunk
   ////////////////////////////////////////////////////////////////////////
@@ -1640,97 +1604,72 @@ static inline void* small_malloc(uint32_t cl) {
     // Use pointer-bumping allocation.
     return bump_alloc(size, b_list);
   }
-
   ////////////////////////////////////////////////////////////////////////
   // Case 3: Allocate from the pbh list.
   ////////////////////////////////////////////////////////////////////////
   if (b_list->pbh_list != NULL) {
     pbh_t* pbh = b_list->pbh_list;
-
     if (pbh->cnt_free > 0) {
       // PBH has the free list.
       assert(pbh->free_list != NULL);
       void* ret = pbh->free_list;
-      
       b_list->free_blk_list = GET_NEXT(pbh->free_list);
       b_list->ptr_to_unused = pbh->unallocated;
       b_list->cnt_free   = pbh->cnt_free - 1;
       b_list->cnt_unused = pbh->cnt_unused;
-
       pbh->cnt_free    = 0;
       pbh->cnt_unused  = 0;
       pbh->free_list   = NULL;
       pbh->unallocated = NULL;
-
       if (pbh->remote_list.cnt == 0) {
         // Move this pbh to the last of pbh_list.
         b_list->pbh_list = pbh->next;
       }
-
       return ret;
     } else if (pbh->cnt_unused > 0) {
       // PBH has only the unallocated chunk.
       assert(pbh->unallocated != NULL);
-
       b_list->ptr_to_unused = pbh->unallocated;
       b_list->cnt_unused = pbh->cnt_unused;
-
       pbh->unallocated = NULL;
       pbh->cnt_unused  = 0;
-
       if (pbh->remote_list.cnt == 0) {
         // Move this pbh to the last of pbh_list.
         b_list->pbh_list = pbh->next;
       }
-
       return bump_alloc(size, b_list);
     } else if (pbh->remote_list.cnt > 0) {
       // If there exists a remote list, get it.
-      remote_list_t top = pbh->remote_list;
-      do {
-      } while (!atomic_compare_exchange_weak(&pbh->remote_list.together, &top.together, 0));
-
+      remote_list_t top ;
+      top.together = atomic_exchange_explicit(&pbh->remote_list.together, 0,memory_order_relaxed);
       void* page_addr = (void*)(pbh->start_page << PAGE_SHIFT);
       void* ret = page_addr + size * top.head;
-
       b_list->free_blk_list = GET_NEXT(ret);
       b_list->cnt_free = top.cnt - 1;
-
       // Move this pbh to the last of pbh_list.
       b_list->pbh_list = pbh->next;
-
       return ret;
     }
   }
-
   ////////////////////////////////////////////////////////////////////////
   // Case 4: Otherwise, allocate a new pbh.
   ////////////////////////////////////////////////////////////////////////
   uint32_t page_num = get_pages_for_class(cl);
   pbh_t* pbh = pb_alloc(tlh, page_num);
   pbh_list_append(&b_list->pbh_list, pbh);
-
   pbh->sizeclass = cl;
   pbh->cnt_free  = 0;
   pbh->free_list = NULL;
-  if (size & (CACHE_LINE_SIZE - 1)) {
-    pbh->status = PBH_AGAINST_FALSE_SHARING;
-  }
+  if (size & (CACHE_LINE_SIZE - 1)) {pbh->status = PBH_AGAINST_FALSE_SHARING;}
   pbh->remote_list.together = 0;
-
   uint32_t blks_per_pbh = get_blocks_for_class(cl);
   void* start_addr = (void*)(pbh->start_page << PAGE_SHIFT);
-  
   pbh->unallocated = NULL;
   pbh->cnt_unused  = 0;
-
   b_list->ptr_to_unused = start_addr;
   b_list->cnt_unused = blks_per_pbh;
-
   return bump_alloc(size, b_list);
 }
-
-
 #ifdef MALLOC_USE_PAGE_BLOCK_CACHE
 static inline void pcache_check_sanity(pb_cache_t* pb_cache) {
   for (int i = 0; i < NUM_PB_CACHE_WAY; i++) {
@@ -1746,18 +1685,14 @@ static inline void pcache_check_sanity(pb_cache_t* pb_cache) {
       } else if (pbh->length != pb_len) {
         CRASH("ERROR: i=%u pb_len=%u pbh->length=%u\n",i,pb_len, pbh->length);
       }
-
       pb = GET_NEXT(pb);
       cnt++;
     }
     if (cnt != list_len) {
-      CRASH("ERROR: i=%u pb_len=%u list_len=%lu cnt=%lu\n",
-            i, pb_len, list_len, cnt);
+      CRASH("ERROR: i=%u pb_len=%u list_len=%lu cnt=%lu\n",i, pb_len, list_len, cnt);
     }
   }
 }
-
-
 static inline void print_char8(char8_t v) {
   printf("{ ");
   for (int i = 7; i >= 0; i--) {
@@ -1767,68 +1702,50 @@ static inline void print_char8(char8_t v) {
   printf(" }");
 }
 #endif
-
-
 /* malloc for MAX_SIZE < size <= NUM_PAGE_CLASSES pages. */
 static inline void* large_malloc(size_t page_len) {
   tlh_t* tlh = &l_tlh;
 #ifdef MALLOC_USE_PAGE_BLOCK_CACHE
   pb_cache_t* pb_cache = &tlh->pb_cache;
-  
   char in = (char)page_len;
   char8_t v_in = {.v = (v8qi){in, in, in, in, in, in, in, in}};
-
   // Compare with cache
   int pos;
   char8_t v_cmp;
   v_cmp.v = __builtin_ia32_pcmpeqb(pb_cache->tag.v, v_in.v);
   if (*(uint64_t*)&v_cmp) {
     inc_pcache_malloc_hit();
-
     // Hit
     pos = get_cache_hit_index(v_cmp.v);
-
     // Update LRU state.
-    pb_cache->state = (pb_cache->state & g_way_table[pos].mask) |
-                      g_way_table[pos].set_bit;
-
+    pb_cache->state = (pb_cache->state & g_way_table[pos].mask) | g_way_table[pos].set_bit;
     // Check the cache block.
     pb_cache_block_t* block = &pb_cache->block[pos];
     if (block->data) {
       inc_pcache_malloc_real_hit();
-
       void* ret = block->data;
       block->data = GET_NEXT(ret);
       block->length--;
-
       return ret;
     }
   }
   else {
     inc_pcache_malloc_miss();
-
     // Miss
     pos = g_lru_table[pb_cache->state];
-
     // Update LRU state.
-    pb_cache->state = (pb_cache->state & g_way_table[pos].mask) |
-                      g_way_table[pos].set_bit;
-
+    pb_cache->state = (pb_cache->state & g_way_table[pos].mask) |g_way_table[pos].set_bit;
     // Evict the victim.
     pb_cache_block_t* block = &pb_cache->block[pos];
     if (block->data) {
       inc_pcache_malloc_evict();
-
       pb_cache_return(tlh, block->data);
-
       block->data = NULL;
       block->length = 0;
     }
-
     // Save the new page class.
     pb_cache->tag.e[pos] = in;
   }
-
   pbh_t* pbh = pb_alloc(tlh, page_len);
   pbh->sizeclass = NUM_CLASSES;
   return (void*)(pbh->start_page << PAGE_SHIFT);
@@ -1838,37 +1755,25 @@ static inline void* large_malloc(size_t page_len) {
   return (void*)(pbh->start_page << PAGE_SHIFT);
 #endif
 }
-
-
 static inline void* huge_malloc(size_t page_len) {
   // Use mmap directly.
   size_t size = page_len << PAGE_SHIFT;
-
   void* ret = do_mmap(0,size);
-
   size_t page_id = (size_t)ret >> PAGE_SHIFT;
   void* val = (void*)(size | HUGE_MALLOC_MARK);
-
   pagemap_expand(page_id, 1);
   pagemap_set(page_id, val);
-
   return ret;
 }
-
-
-static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,
-                               void* first, void* last, uint32_t N) {
+static inline bool remote_free(tlh_t* tlh, pbh_t* pbh, void* first, void* last, uint32_t N) {
   sph_t* sph = pbh_get_superpage(pbh);
   uint32_t cl = pbh->sizeclass;
-
   void* start_addr = (void*)(pbh->start_page << PAGE_SHIFT);
   uint32_t size = get_size_for_class(cl);
   uint16_t blk_idx = (uintptr_t)(first - start_addr) / size;
-
   remote_list_t new_top;
   new_top.head = blk_idx;
   sph = hazard_ptr_set(tlh->hazard_ptr,&sph);
-
   while (true) {
     if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
@@ -1876,7 +1781,6 @@ static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,
         return false;
       }
     }
-
     remote_list_t top = pbh->remote_list;
     if (top.cnt == 0) {
       SET_NEXT(last, NULL);
@@ -1885,68 +1789,49 @@ static inline bool remote_free(tlh_t* tlh, pbh_t* pbh,
       SET_NEXT(last, head_addr);
     }
     new_top.cnt = top.cnt + N;
-
     if (atomic_compare_exchange_strong((uint64_t*)&pbh->remote_list, &top.together, new_top.together)) {
       sph->omark.finish_mark = DO_NOT_FINISH;
       break;
     }
   }
-  if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
-    take_superpage(tlh, sph);
-  }
+  if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {take_superpage(tlh, sph);}
   hazard_ptr_clr(tlh->hazard_ptr,sph);
-
   return true;
 }
-
-
 /* Deallocate a memory for small sizes. */
 static inline void small_free(void* ptr, pbh_t* pbh) {
   tlh_t* tlh = &l_tlh;
-
   if (pbh->status == PBH_AGAINST_FALSE_SHARING) {
     sph_t* sph = pbh_get_superpage(pbh);
     if (UNLIKELY(sph->omark.owner_id != tlh->thread_id)) {
       // Try to free the block to the owner.
-      if (remote_free(tlh, pbh, ptr, ptr, 1))
-        return;
+      if (remote_free(tlh, pbh, ptr, ptr, 1)) return;
     }
   }
-
   // Local free
   uint32_t cl = pbh->sizeclass;
   blk_list_t* b_list = &tlh->blk_list[cl];
-
   uint32_t threshold = get_blocks_for_class(cl);
-  if (UNLIKELY(b_list->cnt_free >= threshold)) {
-    tlh_return_list(tlh, cl);
-  }
-
+  if (UNLIKELY(b_list->cnt_free >= threshold)) {tlh_return_list(tlh, cl);}
   // Prepend the free block to the free block list for its size-class.
   SET_NEXT(ptr, b_list->free_blk_list);
   b_list->free_blk_list = ptr;
   b_list->cnt_free++;
 }
-
-
 static inline void large_free(void* ptr, pbh_t* pbh) {
   tlh_t* tlh = &l_tlh;
 #ifdef MALLOC_USE_PAGE_BLOCK_CACHE
   pb_cache_t* pb_cache = &tlh->pb_cache;
-
   char in = (char)pbh->length;
   char8_t v_in = {.v = (v8qi){in, in, in, in, in, in, in, in}};
-
   // Compare with cache
   int pos;
   char8_t v_cmp;
   v_cmp.v = __builtin_ia32_pcmpeqb(pb_cache->tag.v, v_in.v);
   if (*(uint64_t*)&v_cmp) {
     inc_pcache_free_hit();
-
     // Hit
     pos = get_cache_hit_index(v_cmp.v);
-
     // Link to the page cache.
     pb_cache_block_t* block = &pb_cache->block[pos];
     if (block->length < 2) {
@@ -1956,55 +1841,37 @@ static inline void large_free(void* ptr, pbh_t* pbh) {
       block->length++;
     } else {
       sph_t* sph = pbh_get_superpage(pbh);
-      if (sph->omark.owner_id == tlh->thread_id) {
-        pb_free(tlh, pbh);
-      } else {
-        pb_remote_free(tlh, ptr, pbh);
-      }
+      if (sph->omark.owner_id == tlh->thread_id) {pb_free(tlh, pbh);}
+      else {pb_remote_free(tlh, ptr, pbh);}
     }
   } else {
     inc_pcache_free_miss();
-
     // Miss
     pos = g_lru_table[pb_cache->state];
-
     // Evict the victim.
     pb_cache_block_t* block = &pb_cache->block[pos];
     if (block->data) {
       inc_pcache_free_evict();
-
       pb_cache_return(tlh, block->data);
     }
-
     SET_NEXT(ptr, NULL);
     block->data = ptr;
     block->length = 1;
-
     // Save the new page class.
     pb_cache->tag.e[pos] = in;
   }
-
   // Update LRU state.
-  pb_cache->state = (pb_cache->state & g_way_table[pos].mask) |
-                    g_way_table[pos].set_bit;
+  pb_cache->state = (pb_cache->state & g_way_table[pos].mask) | g_way_table[pos].set_bit;
 #else
   sph_t* sph = pbh_get_superpage(pbh);
-  if (sph->omark.owner_id == tlh->thread_id) {
-    pb_free(tlh, pbh);
-  } else {
-    pb_remote_free(tlh, ptr, pbh);
-  }
+  if (sph->omark.owner_id == tlh->thread_id) {pb_free(tlh, pbh);}
+  else {pb_remote_free(tlh, ptr, pbh);}
 #endif
 }
-
-
 static inline void huge_free(void* ptr, size_t size) {
   do_munmap(ptr, size);
   pagemap_set((size_t)ptr >> PAGE_SHIFT, NULL);
 }
-
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Library Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -2028,26 +1895,18 @@ void *sf_malloc(size_t size) {
   if (UNLIKELY(!g_initialized))       sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
   if(!size) {malloc_timer_stop();return NULL;}
-
   void* ret;
   if (size <= MAX_SIZE) {
     uint32_t cl = get_sizeclass(size);
     ret = small_malloc(cl);
   } else {
     size_t page_len = GET_PAGE_LEN(size);
-    if (page_len <= NUM_PAGE_CLASSES) {
-      ret = large_malloc(page_len);
-    } else {
-      ret = huge_malloc(page_len);
-    }
+    if (page_len <= NUM_PAGE_CLASSES) {ret = large_malloc(page_len);}
+    else {ret = huge_malloc(page_len);}
   }
-
   malloc_timer_stop();
-
   return ret;
 }
-
-
 /*
    free() frees the memory space pointed to by ptr, which must have been 
    returned by a previous call to malloc(), calloc() or realloc(). 
@@ -2077,17 +1936,11 @@ void sf_free(void *ptr) {
     huge_free(ptr, size);
   } else {
     pbh_t* pbh = (pbh_t*)val;
-    if (pbh->sizeclass < NUM_CLASSES) {
-      small_free(ptr, pbh);
-    } else {
-      large_free(ptr, pbh);
-    }
+    if (pbh->sizeclass < NUM_CLASSES) {small_free(ptr, pbh);}
+    else {large_free(ptr, pbh);}
   }
-
   free_timer_stop();
 }
-
-
 /*
    calloc() allocates memory for an array of nmemb elements of size bytes 
    each and returns a pointer to the allocated memory.
@@ -2107,18 +1960,12 @@ void sf_free(void *ptr) {
 void *sf_calloc(size_t nmemb, size_t size) {
   // If nmemb or size is 0, then calloc() returns either NULL, or a unique
   // pointer value that can later be successfully passed to free().
-  if (nmemb == 0 || size == 0) {
-    return NULL;
-  }
-
+  if (nmemb == 0 || size == 0) {return NULL;}
   size_t total_size = nmemb * size;
   void *ret = sf_malloc(total_size);
   if (ret) memset(ret, 0, total_size);
-
   return ret;
 }
-
-
 /* 
    realloc() changes the size of the memory block pointed to by ptr to size
    bytes.  The contents will be unchanged to the minimum of the old and new 
@@ -2142,25 +1989,17 @@ void *sf_realloc(void *ptr, size_t size) {
   if (UNLIKELY(!g_initialized))       sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
 #endif
-
   // If ptr is NULL, then the call is equivalent to malloc(size), for all 
   // values of size.
-  if (ptr == NULL) {
-    return sf_malloc(size);
-  }
+  if (ptr == NULL) {return sf_malloc(size);}
 
   // If size is equal to zero, and ptr is not NULL, then the call is 
   // equivalent to free(ptr).  Unless ptr is NULL, it must have been returned
   // by an earlier call to malloc(), calloc() or realloc(). 
   // If the area pointed to was moved, a free(ptr) is done.
-  if (size == 0) {
-    sf_free(ptr);
-    return NULL;
-  }
-
+  if (size == 0) {sf_free(ptr);return NULL;}
   inc_cnt_realloc();
   realloc_timer_start();
-
   size_t old_size;
   size_t page_id = (size_t)ptr >> PAGE_SHIFT;
   void* val = pagemap_get(page_id);
@@ -2168,13 +2007,9 @@ void *sf_realloc(void *ptr, size_t size) {
     old_size = (size_t)val & ~HUGE_MALLOC_MARK;
   } else {
     pbh_t* pbh = (pbh_t*)val;
-    if (pbh->sizeclass < NUM_CLASSES) {
-      old_size = get_size_for_class(pbh->sizeclass);
-    } else {
-      old_size = pbh->length * PAGE_SIZE;
-    }
+    if (pbh->sizeclass < NUM_CLASSES) {old_size = get_size_for_class(pbh->sizeclass);}
+    else {old_size = pbh->length * PAGE_SIZE;}
   }
-
   // If size is larger than old_size or size is smaller than the half of
   // old_size, allocate a new block.
   void* ret;
@@ -2182,17 +2017,11 @@ void *sf_realloc(void *ptr, size_t size) {
     ret = sf_malloc(size);
     memmove(ret, ptr, ((old_size < size) ? old_size : size));
     sf_free(ptr);
-  } else {
-    // Otherwise, return the original pointer.
-    ret = ptr;
-  }
-
+  // Otherwise, return the original pointer.
+  } else {ret = ptr;}
   realloc_timer_stop();
-
   return ret;
 }
-
-
 /*
    The function posix_memalign() allocates size bytes and places the address
    of the allocated memory in *memptr.  The address of the allocated memory
@@ -2219,23 +2048,19 @@ int sf_posix_memalign(void **memptr, size_t alignment, size_t size) {
   if (UNLIKELY(!g_initialized))       sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
 #endif
-
   inc_cnt_memalign();
   memalign_timer_start();
-
   if (size == 0) {
     *memptr = NULL;
     memalign_timer_stop();
     return 0;
   }
-
   // Check if alignment is a power of 2.
   if ((alignment & (alignment - 1)) != 0) {
     *memptr = NULL;
     memalign_timer_stop();
     return EINVAL;
   }
-
   // Fall back to malloc if we would already align properly.
   if (alignment <= get_alignment(size)) {
     *memptr = sf_malloc(size);
@@ -2243,14 +2068,10 @@ int sf_posix_memalign(void **memptr, size_t alignment, size_t size) {
     memalign_timer_stop();
     return 0;
   }
-
   // Bigger alignment.
   if (size <= MAX_SIZE && alignment < PAGE_SIZE) {
     uint32_t cl = get_sizeclass(size);
-    while (cl < NUM_CLASSES &&
-           ((get_size_for_class(cl) & (alignment - 1)) != 0)) {
-      cl++;
-    }
+    while (cl < NUM_CLASSES && ((get_size_for_class(cl) & (alignment - 1)) != 0)) {cl++;}
     if (cl < NUM_CLASSES) {
       size = get_size_for_class(cl);
       *memptr = sf_malloc(size);
@@ -2258,51 +2079,37 @@ int sf_posix_memalign(void **memptr, size_t alignment, size_t size) {
       return 0;
     }
   }
-
   // Use pagelist allocator.
   if (alignment <= PAGE_SIZE) {
     // size may not huge, but we need page allocation.
     size_t page_num = GET_PAGE_LEN(size);
-    if (page_num <= NUM_PAGE_CLASSES) {
-      *memptr = large_malloc(page_num);
-    } else {
-      *memptr = huge_malloc(page_num);
-    }
+    if (page_num <= NUM_PAGE_CLASSES) {*memptr = large_malloc(page_num);}
+    else {*memptr = huge_malloc(page_num);}
     memalign_timer_stop();
     return 0;
   }
-
   // Allocate extra pages and carve off an aligned portion.
   size_t alloc_pages = GET_PAGE_LEN(size + alignment);
   void *new_blk = huge_malloc(alloc_pages);
   assert(new_blk != NULL);
-
-  void* ret_blk = new_blk;
-  while (((uintptr_t)ret_blk & (alignment - 1)) != 0) {
-    ret_blk += PAGE_SIZE;
-  }
+  void* ret_blk = (void*)(((uintptr_t)new_blk+(alignment-1))&~(alignment-1));
+//  while (((uintptr_t)ret_blk & (alignment - 1)) != 0) {ret_blk += PAGE_SIZE;}
   assert(((size_t)(ret_blk - new_blk) >> PAGE_SHIFT) < alloc_pages);
-
   if (ret_blk != new_blk) {
     // We need split.
     void* val = pagemap_get((size_t)new_blk >> PAGE_SHIFT);
     size_t skip_size = (size_t)((uintptr_t)ret_blk - (uintptr_t)new_blk);
     huge_free(new_blk, skip_size);
-
     size_t size = ((size_t)val & ~HUGE_MALLOC_MARK) - skip_size;
     size_t page_id = (size_t)ret_blk >> PAGE_SHIFT;
     val = (void*)(size | HUGE_MALLOC_MARK);
-
     pagemap_expand(page_id, 1);
     pagemap_set(page_id, val);
   }
-
   *memptr = ret_blk;
   memalign_timer_stop();
   return 0;
 }
-
-
 /*
    valloc() allocates size bytes and returns a pointer to the allocated
    memory.  The memory address will be a multiple of the page size.
@@ -2319,15 +2126,14 @@ void *sf_valloc(size_t size) {
   if (UNLIKELY(!g_initialized))       sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
 #endif
-
   void *free_blk;
-  int ret = posix_memalign(&free_blk, sysconf(_SC_PAGESIZE), size);
+#ifndef NDEBUG
+  int ret = 
+#endif 
+    sf_posix_memalign(&free_blk, sysconf(_SC_PAGESIZE), size);
   assert(ret == 0);
-
   return free_blk;
 }
-
-
 /*
    memalign() allocates size bytes and returns a pointer to the allocated
    memory.  The memory address will be a multiple of boundary, which must 
@@ -2346,45 +2152,37 @@ void *sf_memalign(size_t boundary, size_t size) {
   if (UNLIKELY(!g_initialized))       sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
 #endif
-
   void *free_blk;
-  int ret = sf_posix_memalign(&free_blk, boundary, size);
+#ifndef NDEBUG
+  int ret = 
+#else
+    (void)
+#endif 
+    sf_posix_memalign(&free_blk, boundary, size);
   assert(ret == 0);
-
   return free_blk;
 }
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Statistics Functions
 ////////////////////////////////////////////////////////////////////////////
 void malloc_stats() {}
-
 #ifdef MALLOC_STATS
 void stats_init() {
   FILE *cpuinfo_stream;
   char buffer[100];
-
   cpuinfo_stream = fopen("/proc/cpuinfo", "r");
-  if (cpuinfo_stream == NULL) {
-    HANDLE_ERROR("fopen() in stats_init()");
-  }
-
+  if (cpuinfo_stream == NULL) {HANDLE_ERROR("fopen() in stats_init()");}
   while (fgets(buffer, 100, cpuinfo_stream)) {
     if (strncmp(buffer, "cpu MHz", 7) == 0) {
       char *pch = strtok(buffer, " :");
-      for (int i = 0; i < 2; i++) {
-        pch = strtok(NULL, " :");
-      }
+      for (int i = 0; i < 2; i++) {pch = strtok(NULL, " :");}
       CPU_CLOCK = atof(pch) * 1e6;
 //      printf("cpu frequency: %.1f\n", CPU_CLOCK);
       break;
     }
   }
-
   fclose(cpuinfo_stream);
 }
-
 void print_stats() {
   char thread_name[1024];
   pthread_getname_np(pthread_self(),thread_name,sizeof(thread_name));
@@ -2421,7 +2219,6 @@ void print_stats() {
       );
 }
 #endif
-
 void *malloc(size_t s){return sf_malloc(s);}
 void  free  (void*  p){return sf_free(p);}
 void *realloc(void *p, size_t s){return sf_realloc(p,s);}
@@ -2445,8 +2242,6 @@ void *__libc_memalign(size_t align, size_t s)       ALIAS("memalign");
 void *__libc_valloc(size_t size)                    ALIAS("valloc");
 int __posix_memalign(void **r, size_t a, size_t s)  ALIAS("posix_memalign");
 #endif
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Debug Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -2457,33 +2252,29 @@ static FILE *g_DOUT = NULL;
 static void debug_init() {
   g_DOUT = stdout;
 }
-
 static inline void print_class_array() {
   fprintf(g_DOUT, "========== SizeMap.class_array ==========\n");
-  for (int i = 0; i < CLASS_ARRAY_SIZE; ++i) {
+  for (uint32_t i = 0; i < CLASS_ARRAY_SIZE; ++i) {
     fprintf(g_DOUT, "%3d: %u\n", i, g_sizemap.class_array[i]);
   }
   fprintf(g_DOUT, "\n");
 }
-
 static inline void print_class_to_size() {
   fprintf(g_DOUT, "========== SizeMap.class_to_size ==========\n");
-  for (int i = 0; i < NUM_CLASSES; ++i) {
+  for (uint32_t i = 0; i < NUM_CLASSES; ++i) {
     fprintf(g_DOUT, "%2d: %u (%u)\n",
         i, g_sizemap.info[i].class_to_size,
         g_sizemap.info[i].class_to_size % CACHE_LINE_SIZE);
   }
   fprintf(g_DOUT, "\n");
 }
-
 static inline void print_class_to_pages() {
   fprintf(g_DOUT, "========== SizeMap.class_to_pages ==========\n");
-  for (int i = 0; i < NUM_CLASSES; ++i) {
+  for (uint32_t i = 0; i < NUM_CLASSES; ++i) {
     fprintf(g_DOUT, "%2d: %u\n", i, g_sizemap.info[i].class_to_pages);
   }
   fprintf(g_DOUT, "\n");
 }
-
 static inline void print_num_blocks_per_pbh() {
   fprintf(g_DOUT, "========== SizeMap.num_blocks_per_pbh ==========\n");
   for (int i = 0; i < NUM_CLASSES; ++i) {
@@ -2491,7 +2282,6 @@ static inline void print_num_blocks_per_pbh() {
   }
   fprintf(g_DOUT, "\n");
 }
-
 #ifdef MALLOC_DEBUG_DETAIL
 static void print_sizemap() {
   print_class_array();
@@ -2500,27 +2290,20 @@ static void print_sizemap() {
   print_num_blocks_per_pbh();
 }
 #endif
-
 static uint32_t get_pbh_list_length(const pbh_t* list) {
   if (list == NULL) return 0;
-
   uint32_t len = 1;
-  for (pbh_t* s = list->next; s != list; s = s->next) {
-    len++;
-  }
+  for (pbh_t* s = list->next; s != list; s = s->next) {len++;}
   return len;
 }
-
 static const char* get_pbh_status_str(uint32_t status) {
   switch (status) {
-    case PBH_ON_FREE_LIST: return "PBH_ON_FREE_LIST";
-    case PBH_IN_USE:       return "PBH_IN_USE";
-    case PBH_AGAINST_FALSE_SHARING:
-                           return "PBH_AGAINST_FALSE_SHARING";
-    default: return "UNKNOWN";
+    case PBH_ON_FREE_LIST:          return "PBH_ON_FREE_LIST";
+    case PBH_IN_USE:                return "PBH_IN_USE";
+    case PBH_AGAINST_FALSE_SHARING: return "PBH_AGAINST_FALSE_SHARING";
+    default:                        return "UNKNOWN";
   }
 }
-
 void print_pbh(pbh_t* pbh) {
   fprintf(g_DOUT,
       "---------------------------------------\n"
@@ -2551,29 +2334,23 @@ void print_pbh(pbh_t* pbh) {
       pbh->remote_list.head, pbh->remote_list.cnt
   );
 }
-
 void print_pbh_list(pbh_t* list) {
   fprintf(g_DOUT, "========== PBH List ==========\n"); 
   if (list == NULL) {
     fprintf(g_DOUT, "No list\n");
     return;
   }
-
   uint64_t sum_cnt_free = 0;
   uint64_t sum_cnt_unused = 0;
   uint64_t sum_cnt_remote = 0;
-
   pbh_t* pbh = list;
   while (1) {
     print_pbh(pbh);
-
     sum_cnt_free += pbh->cnt_free;
     sum_cnt_unused += pbh->cnt_unused;
     sum_cnt_remote += pbh->remote_list.cnt;
-
     fprintf(g_DOUT, "PBH FREE LIST: \n");
     print_block_list(pbh->free_list);
-
     pbh = pbh->next;
     if (pbh != list) fprintf(g_DOUT, "--->\n");
     else break;
@@ -2582,7 +2359,6 @@ void print_pbh_list(pbh_t* list) {
       break;
     }
   };
-
   fprintf(g_DOUT,
       "---------------------------------------\n"
       "SUMMARY\n"
@@ -2597,7 +2373,6 @@ void print_pbh_list(pbh_t* list) {
   );
   fflush(g_DOUT);
 }
-
 void print_superpage(sph_t* spage) {
   fprintf(g_DOUT,
       "---------------------------------------\n"
@@ -2633,13 +2408,10 @@ void print_superpage_list(sph_t* list) {
     fprintf(g_DOUT, "No list\n");
     return;
   }
-
   uint32_t superpage_len = 1;
-
   sph_t* spage = list;
   while (1) {
     print_superpage(spage);
-
     // next superpage
     spage = spage->next;
     if (spage != list) {
@@ -2647,7 +2419,6 @@ void print_superpage_list(sph_t* list) {
       superpage_len++;
     } else break;
   };
-
   fprintf(g_DOUT,
       "---------------------------------------\n"
       "SUMMARY\n"
@@ -2658,10 +2429,8 @@ void print_superpage_list(sph_t* list) {
   );
   fflush(g_DOUT);
 }
-
 void print_free_pb_list(tlh_t* tlh) {
   fprintf(g_DOUT, "========== Free Page Block Lists ==========\n"); 
-
   size_t pagelist_cnt = 0;
   for (uint32_t i = 0; i < NUM_PAGE_CLASSES; i++) {
     size_t length = get_pbh_list_length(tlh->free_pb_list[i]);
@@ -2675,7 +2444,6 @@ void print_free_pb_list(tlh_t* tlh) {
     print_pbh_list(tlh->free_pb_list[i]);
     pagelist_cnt += length;
   }
-
   fprintf(g_DOUT,
       "---------------------------------------\n"
       "FPBL SUMMARY\n"
@@ -2686,7 +2454,6 @@ void print_free_pb_list(tlh_t* tlh) {
   );
   fflush(g_DOUT);
 }
-
 static uint32_t get_block_list_length(void* block) {
   uint32_t length = 0;
   while (block != NULL) {
@@ -2695,7 +2462,6 @@ static uint32_t get_block_list_length(void* block) {
   }
   return length;
 }
-
 void print_block_list(void* block) {
   uint32_t length = 0;
   while (block != NULL) {
@@ -2706,7 +2472,6 @@ void print_block_list(void* block) {
   }
   fprintf(g_DOUT, "%p\n", block);
 }
-
 #ifdef MALLOC_USE_PAGE_BLOCK_CACHE
 void print_pb_cache(pb_cache_t* pb_cache) {
   fprintf(g_DOUT, "========== Page Block Cache ==========\n"); 
@@ -2733,9 +2498,9 @@ void print_pb_cache(pb_cache_t* pb_cache) {
 #endif
 
 void print_tlh(tlh_t* tlh) {
-  fprintf(g_DOUT, "========== Thread Local Heap (T%u) ==========\n",
-      tlh->thread_id); 
-
+  char thread_name[64];
+  pthread_getname_np(pthread_self(),thread_name,sizeof(thread_name));
+  fprintf(g_DOUT, "========== Thread Local Heap [T%u](%s) ==========\n", tlh->thread_id,thread_name); 
   fprintf(g_DOUT, "========== Block Lists ==========\n"); 
   for (uint32_t i = 0; i < NUM_CLASSES; i++) {
     blk_list_t* b_list = &tlh->blk_list[i];
@@ -2744,40 +2509,33 @@ void print_tlh(tlh_t* tlh) {
         (b_list->ptr_to_unused == NULL) &&
         (b_list->cnt_free == 0) &&
         (b_list->cnt_unused == 0)) continue;
-
     fprintf(g_DOUT,
-        "---------------------------------------\n"
-        "BLOCK LIST %u\n"
-        "---------------------------------------\n"
-        "free_blk_list : %p (len:%u)\n"
-        "unallocated   : %p\n"
-        "cnt_free      : %u\n"
-        "cnt_unused    : %u\n"
-        "pbh_list      : %p (len:%u)\n"
-        "---------------------------------------\n",
-        i,
-        b_list->free_blk_list, get_block_list_length(b_list->free_blk_list),
-        b_list->ptr_to_unused,
-        b_list->cnt_free,
-        b_list->cnt_unused,
-        b_list->pbh_list, get_pbh_list_length(b_list->pbh_list)
+          "---------------------------------------\n"
+          "BLOCK LIST %u\n"
+          "---------------------------------------\n"
+          "free_blk_list : %p (len:%u)\n"
+          "unallocated   : %p\n"
+          "cnt_free      : %u\n"
+          "cnt_unused    : %u\n"
+          "pbh_list      : %p (len:%u)\n"
+          "---------------------------------------\n",
+          i,
+          b_list->free_blk_list, get_block_list_length(b_list->free_blk_list),
+          b_list->ptr_to_unused,
+          b_list->cnt_free,
+          b_list->cnt_unused,
+          b_list->pbh_list, get_pbh_list_length(b_list->pbh_list)
         );
-
     print_pbh_list(b_list->pbh_list);
-
     fprintf(g_DOUT, "---------------------------------------\n");
     fprintf(g_DOUT, "FREE LIST:\n");
     print_block_list(b_list->free_blk_list);
     fprintf(g_DOUT, "---------------------------------------\n");
   }
   fprintf(g_DOUT, "\n");
-
   print_free_pb_list(tlh);
-
   print_pb_cache(&tlh->pb_cache);
-  
   print_superpage_list(tlh->sp_list);
-
   fprintf(g_DOUT, "\n");
 }
 #endif //MALLOC_DEBUG

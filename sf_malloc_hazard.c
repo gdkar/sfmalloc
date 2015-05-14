@@ -1,5 +1,4 @@
 #include "sf_malloc_hazard.h"
-#include "sf_malloc_atomic.h"
 #include "sf_malloc_asm.h"
 #include <alloca.h>
 #include <string.h>
@@ -12,7 +11,7 @@ hazard_ptr_t* hazard_ptr_alloc() {
   if (g_hazard_list.num_free> 0) {
     for (hazard_ptr_t* hp = g_hazard_list.head; hp != NULL; hp = hp->next) {
       if ((hp->active) || (atomic_exchange_explicit(&hp->active, 1,memory_order_relaxed))) continue;
-      atomic_dec_int((int32_t*)&g_hazard_list.num_free);
+      atomic_fetch_add_explicit((int32_t*)&g_hazard_list.num_free,-1,memory_order_relaxed);
       hp->count = 0;
       memset(hp->node,0,sizeof(hp->node)); 
       return hp;
@@ -29,11 +28,11 @@ hazard_ptr_t* hazard_ptr_alloc() {
     last_hptr = next_hptr;
   }
   hazard_ptr_t* top;
+  top = g_hazard_list.head;
   do {
-    top = g_hazard_list.head;
     last_hptr->next = top;
-  } while (!cas_ptr((volatile void**)&g_hazard_list.head, (void*)top, (void*)first_hptr));
-  atomic_add_uint(&g_hazard_list.num_free, rem_len);
+  } while (!atomic_compare_exchange_weak(&g_hazard_list.head, &top, first_hptr));
+  atomic_fetch_add_explicit(&g_hazard_list.num_free, rem_len,memory_order_relaxed);
   return first_hptr;
 }
 void * _hazard_ptr_set(hazard_ptr_t*hp, void **target){
@@ -61,7 +60,7 @@ void _hazard_ptr_clr(hazard_ptr_t *hp, void *target){
 void hazard_ptr_free(hazard_ptr_t* hp) {
   hp->count  = 0;
   hp->active = 0;
-  atomic_inc_uint(&g_hazard_list.num_free);
+  atomic_fetch_add_explicit(&g_hazard_list.num_free,1,memory_order_relaxed);
 }
 bool _hazard_ptr_scan_single(void* sph) {
   for (hazard_ptr_t* hp = g_hazard_list.head; hp != NULL; hp = hp->next) {

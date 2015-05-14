@@ -12,7 +12,7 @@ LIBS = -lpthread -lrt -ldl
 LIB_MALLOC = $(addprefix .libs/,libsfmalloc.a libsfmalloc.so libsfmalloc-debug.so)
 LIB_DIR = .libs
 OBJ_DIR = .objs
-OPT_FLAGS = -O3 -Wall -g -mmmx -msse -march=native \
+OPT_FLAGS = -O3 -Wall -Wextra -g -mmmx -msse -march=native \
   -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc \
   -fno-builtin-calloc -fno-builtin-cfree \
   -fno-builtin-memalign -fno-builtin-posix_memalign \
@@ -35,7 +35,7 @@ static: .libs/libsfmalloc.a
 
 dirs:
 	mkdir -p $(OBJ_DIR) $(LIB_DIR)
-.objs/sf_malloc.o: sf_malloc.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h
+.objs/sf_malloc.o: sf_malloc.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h 
 	$(CC) $(CFLAGS) -c $< -o $@
 .objs/sf_malloc_wrapper.o: sf_malloc_wrapper.c
 	$(CC) $(CFLAGS) -c $< -o $@
