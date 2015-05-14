@@ -43,7 +43,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-
+#if 0
 static inline int atomic_xchg_int(volatile int *addr, int val) {
   asm volatile (
       /*lock*/ "xchgl %0, %1"
@@ -199,5 +199,6 @@ static inline bool _cas_ptr(volatile void **addr, void *old_ptr,
                                           (uint64_t)new_ptr); 
 }
 #define cas_ptr(_addr,_old_ptr,_new_ptr)  _cas_ptr((volatile void**)(_addr),(void*)(_old_ptr),(void*)(_new_ptr))
+#endif
 #endif //__SF_MALLOC_ATOMIC_H__
 

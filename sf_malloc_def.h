@@ -62,13 +62,13 @@
 ////////////////////////////////////////////////////////////////////////////
 #define PAGE_SIZE           (1 << PAGE_SHIFT)
 #define MAX_SIZE            (8u * PAGE_SIZE)
-#define ALIGNMENT           16
-#define NUM_CLASSES         126
+#define ALIGNMENT           8
+#define NUM_CLASSES         62
 #define MAX_SMALL_SIZE      1024
 #define CLASS_ARRAY_SIZE    ((((1<<PAGE_SHIFT)*8u + 127 + (120<<7)) >> 7) + 1)
 #define NUM_PB_CACHE_WAY    8
 /* NUM_PAGE_CLASSES should be less than 256. */
-#define NUM_PAGE_CLASSES    126
+#define NUM_PAGE_CLASSES    62
 //#define NUM_PAGE_CLASSES    126
 //#define NUM_PAGE_CLASSES    254
 
@@ -278,8 +278,8 @@ typedef struct {
   (((s) >> PAGE_SHIFT) + (((s) & (PAGE_SIZE - 1)) != 0 ? 1 : 0))
 #define MIN(a,b)  (((a) < (b)) ? (a) : (b))
 #define MAX(a,b)  (((a) > (b)) ? (a) : (b))
-#define LIKELY(x)   __builtin_expect(x, 1)
-#define UNLIKELY(x) __builtin_expect(x, 0)
+#define LIKELY(x)   __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #define TID()       l_tlh.thread_id
 #define CRASH(fmt,...)    \
   fprintf(stderr, "%s:%d: "fmt, __FILE__, __LINE__, __VA_ARGS__); \

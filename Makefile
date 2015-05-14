@@ -1,10 +1,10 @@
 
-CC      = clang
-CXX     = clang++
+CC      = gcc 
+CXX     = g++
 AR      = ar
 RANLIB  = ranlib
 
-OBJS = sf_malloc.o sf_malloc_new.o sf_malloc_wrapper.o sf_malloc_hazard.o
+OBJS = sf_malloc.o sf_malloc_new.o sf_malloc_wrapper.o sf_malloc_hazard.o sf_malloc_init.o
 SHARED_OBJS = sf_malloc_shared.o sf_malloc_new_shared.o sf_malloc_init_shared.o sf_malloc_wrapper_shared.o sf_malloc_hazard_shared.o
 DEBUG_OBJS = sf_malloc_debug.o sf_malloc_new_debug.o sf_malloc_init_debug.o sf_malloc_wrapper_debug.o sf_malloc_hazard_debug.o
 PREFIX = /usr/local
@@ -22,7 +22,7 @@ DEFS += -D_REENTRANT -DMALLOC_NEED_INIT -DMALLOC_NEED_THREAD_INIT -DMALLOC_USE_S
 #DEFS += -D_REENTRANT -DNDEBUG
 
 CFLAGS = -std=gnu11 -fPIC -shared $(OPT_FLAGS) $(INC_FLAGS) $(DEFS) 
-CXXFLAGS =  -fPIC -shared -ffast-math -std=gnu++14 $(OPT_FLAGS) $(INC_FLAGS) $(DEFS)
+CXXFLAGS = -std=gnu++14 -fPIC -shared -ffast-math $(OPT_FLAGS) $(INC_FLAGS) $(DEFS)
 DEBUG_FLAGS := -DMALLOC_DEBUG -DMALLOC_DEBUG_DETAIL -DMALLOC_STATS 
 SHARED_FLAGS := -UMALLOC_DEBUG -UMALLOC_DEBUG_DETAIL -DNDEBUG
 
@@ -41,6 +41,9 @@ dirs:
 	$(CC) $(CFLAGS) -c $< -o $@
 .objs/sf_malloc_hazard.o: sf_malloc_hazard.c
 	$(CC) $(CFLAGS) -c $< -o $@
+.objs/sf_malloc_init.o: sf_malloc_init.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 .objs/sf_malloc_new.o: sf_malloc_new.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 .objs/%_shared.o: %.cpp
@@ -50,7 +53,7 @@ dirs:
 .objs/%_shared.o: %.c
 	$(CC) $(CFLAGS) $(SHARED_FLAGS) -DPIC -fPIC -c $< -o $@
 .objs/%_debug.o: %.c
-	$(CC) $(XFLAGS) $(DEBUG_FLAGS) -DPIC -fPIC -c $< -o $@
+	$(CC) $(CFLAGS) $(DEBUG_FLAGS) -DPIC -fPIC -c $< -o $@
 .libs/libsfmalloc.a: $(addprefix .objs/,$(OBJS))
 	$(AR) cr $@ $(addprefix .objs/,$(OBJS))
 	$(RANLIB) $@

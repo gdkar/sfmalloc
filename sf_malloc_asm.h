@@ -93,7 +93,7 @@ static inline uint64_t xorshift1024star(xorshift1024_state_t* state){
 }
 
 static inline uint64_t threadrand_128(){
-  static __thread xorshift128_state_t  state = (xorshift128_state_t){.s={0,0}};
+  static __thread xorshift128_state_t  state = {.s={0,0}};
   if(UNLIKELY(!state.s[0]&&!state.s[1])){
     state.s[0] = (uint64_t)&state;
     state.s[1] = get_timestamp();
@@ -102,7 +102,7 @@ static inline uint64_t threadrand_128(){
   return xorshift128plus(&state);
 }
 static inline uint64_t threadrand_1024(){
-  static __thread xorshift1024_state_t state = (xorshift1024_state_t){.s={0}};
+  static __thread xorshift1024_state_t state = {.s={0}};
   static __thread bool initialized = false;
   if(UNLIKELY(!initialized)){
     for(int i = 0; i< 16; i++)
