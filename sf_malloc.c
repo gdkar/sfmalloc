@@ -76,7 +76,7 @@ static uint32_t          g_destructed  = 0;
 atomic_uint_fast32_t     g_id         = ATOMIC_VAR_INIT(1);
 atomic_uint_fast32_t     g_thread_num = ATOMIC_VAR_INIT(0);
 static pthread_key_t     g_thread_key ;
-
+static __thread uint32_t t_thread_id = 0;
 
 ////////////////////////////////////////////////////////////////////////////
 // Global Data Structures
@@ -506,10 +506,8 @@ static uint32_t get_alignment(uint32_t size) {
     // requirements for some SSE types.
     alignment = 16;
   }
-
   assert(size < 16 || alignment >= 16);
   assert((alignment & (alignment - 1)) == 0);
-
   return alignment;
 }
 
@@ -517,16 +515,12 @@ static uint32_t get_alignment(uint32_t size) {
 ////////////////////////////////////////////////////////////////////////////
 // PageMap Functions
 ////////////////////////////////////////////////////////////////////////////
-static void pagemap_init() {
-}
-
-
+static void pagemap_init() {}
 static void pagemap_expand(size_t page_id, size_t n) {
   for (size_t key = page_id; key < page_id + n; ) {
     const size_t i1 = key >> (PMAP_LEAF_BIT + PMAP_INTERIOR_BIT);
     const size_t i2 = (key >> PMAP_LEAF_BIT) & (PMAP_INTERIOR_LEN - 1);
     assert(i1 < PMAP_INTERIOR_LEN && i2 < PMAP_INTERIOR_LEN);
-
     // Make 2nd level node if necessary
     if (g_pagemap.node[i1] == NULL) {
       size_t node_size = sizeof(pagemap_node_t);
@@ -536,7 +530,6 @@ static void pagemap_expand(size_t page_id, size_t n) {
         do_munmap(new_node, node_size);
       }
     }
-
     // Make leaf node if necessary
     pagemap_node_t* interior = g_pagemap.node[i1];
     if (interior->leaf[i2] == NULL) {
@@ -547,13 +540,10 @@ static void pagemap_expand(size_t page_id, size_t n) {
         do_munmap(new_leaf, leaf_size);
       }
     }
-
     // Advance key past whatever is covered by this leaf node
     key = ((key >> PMAP_LEAF_BIT) + 1) << PMAP_LEAF_BIT;
   }
 }
-
-
 static inline void* pagemap_get(size_t page_id) {
 #ifdef MALLOC_USE_PAGEMAP_CACHE
   const size_t tag = page_id >> PMAP_LEAF_BIT;
@@ -576,21 +566,13 @@ static inline void* pagemap_get(size_t page_id) {
   return g_pagemap.node[i1]->leaf[i2]->val[i3];
 #endif
 }
-
-
 static inline void* pagemap_get_checked(size_t page_id) {
   const size_t i1 = page_id >> (PMAP_LEAF_BIT + PMAP_INTERIOR_BIT);
   const size_t i2 = (page_id >> PMAP_LEAF_BIT) & (PMAP_INTERIOR_LEN - 1);
   const size_t i3 = page_id & (PMAP_LEAF_LEN - 1);
-
-  if (((page_id >> PMAP_BITS) > 0) ||
-      (g_pagemap.node[i1] == NULL) ||
-      (g_pagemap.node[i1]->leaf[i2] == NULL)) return NULL;
-
+  if (((page_id >> PMAP_BITS) > 0) || (g_pagemap.node[i1] == NULL) || (g_pagemap.node[i1]->leaf[i2] == NULL)) return NULL;
   return g_pagemap.node[i1]->leaf[i2]->val[i3];
 }
-
-
 static inline void pagemap_set(size_t page_id, void* val) {
 #ifdef MALLOC_USE_PAGEMAP_CACHE
   const size_t tag = page_id >> PMAP_LEAF_BIT;
@@ -613,20 +595,16 @@ static inline void pagemap_set(size_t page_id, void* val) {
 
 
 static inline void pagemap_set_range(size_t start, size_t len, void* val) {
-  for (size_t page_id = start; page_id < (start + len); page_id++) {
-    pagemap_set(page_id, val);
-  }
+  for (size_t page_id = start; page_id < (start + len); page_id++) {pagemap_set(page_id, val);}
 }
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Superpage Header Functions
 ////////////////////////////////////////////////////////////////////////////
 static sph_t* sph_alloc(tlh_t* tlh) {
-  sph_t* sph = g_free_sp_list;
+  sph_t* sph = atomic_load(&g_free_sp_list);
   if (sph != NULL) {
     // Pop the whole list.
-    if (atomic_compare_exchange_weak(&g_free_sp_list, &sph, NULL)) {
+    if ((sph = atomic_exchange_explicit(&g_free_sp_list, NULL,memory_order_relaxed))) {
       // Get the first one and push the remained list.
       sph_t* next_sph = sph->next;
       if (next_sph != NULL) {
@@ -634,10 +612,7 @@ static sph_t* sph_alloc(tlh_t* tlh) {
         if (!atomic_compare_exchange_strong(&g_free_sp_list, &expected, next_sph)) {
           // FIXME: Find the last superpage.
           sph_t* last_sph = next_sph;
-          while (last_sph->next != NULL) {
-            last_sph = last_sph->next;
-          }
-
+          while (last_sph->next != NULL) {last_sph = last_sph->next;}
           // Push to the global free superpage list.
           sph_t* cur_sph;
           cur_sph = g_free_sp_list;
@@ -646,55 +621,37 @@ static sph_t* sph_alloc(tlh_t* tlh) {
           } while (!atomic_compare_exchange_weak(&g_free_sp_list, &cur_sph, next_sph));
         }
       }
-
       // Decrease the length of global free superpage list.
       assert(g_free_sp_len > 0);
       atomic_fetch_add_explicit(&g_free_sp_len,-1,memory_order_relaxed);
-    } else {
-      // cas failed.
-      sph = NULL;
-    }
+    } 
   }
-
   if (sph == NULL) {
     void* mem = do_mmap(0,SUPERPAGE_SIZE + SPH_SIZE);
     sph = (sph_t*)mem;
     sph->start_page = (size_t)(mem + SPH_SIZE) >> PAGE_SHIFT;
-
     // Expand pagemap.
     pagemap_expand(sph->start_page, SUPERPAGE_LEN);
   }
-
   // Set the owner of superpage.
   sph->omark.owner_id = tlh->thread_id;
-
   // Prepend the new superpage to the superpage list.
   sph_list_prepend(&tlh->sp_list, sph);
-
   return sph;
 }
-
-
 static void sph_free(tlh_t* tlh, sph_t* sph) {
   // Remove the superpage form the Superpage List.
   sph_list_remove(&tlh->sp_list, sph);
-
   // Update pagemap.
   pagemap_set_range(sph->start_page, SUPERPAGE_LEN, NULL);
-
   // Check the hazard_mark.
   bool hazardous = false;
   if (sph->hazard_mark) {
-    if (hazard_ptr_scan_single(sph)) {
-      hazardous = true;
-    } else {
-      sph->hazard_mark = false;
-    }
+    if (hazard_ptr_scan_single(sph)) {hazardous = true;}
+    else {sph->hazard_mark = false;}
   }
-
   if (hazardous || g_free_sp_len < FREE_SP_LIST_THRESHOLD) {
     atomic_fetch_add_explicit(&g_free_sp_len,1,memory_order_relaxed);
-
     // Push to the global Free Superpage List.
     sph_t* cur_sph;
     cur_sph = g_free_sp_list;
@@ -706,37 +663,25 @@ static void sph_free(tlh_t* tlh, sph_t* sph) {
     do_munmap(sph, SUPERPAGE_SIZE + SPH_SIZE);
   }
 }
-
-
 static void sph_get_remote_pbs(sph_t* sph) {
   void* remote_pb;
-  remote_pb = sph->remote_pb_list;
-  do {
-  } while (!atomic_compare_exchange_weak(&sph->remote_pb_list, &remote_pb, NULL));
-
+  remote_pb = (void*)atomic_exchange_explicit(&sph->remote_pb_list_uint, 0,memory_order_relaxed);
   do {
     size_t page_id = (size_t)remote_pb >> PAGE_SHIFT;
     pbh_t* pbh = (pbh_t*)pagemap_get(page_id);
     pbh->status = PBH_ON_FREE_LIST;
     assert(pbh->sizeclass == NUM_CLASSES);
     sph_coalesce_pbs(pbh);
-
     remote_pb = GET_NEXT(remote_pb);
   } while (remote_pb);
 }
-
-
 static void sph_coalesce_pbs(pbh_t* pbh) {
   pbh_t* prev_pbh = (pbh_t*)pagemap_get_checked(pbh->start_page - 1);
   assert(((uintptr_t)prev_pbh & HUGE_MALLOC_MARK) == 0);
-
   void*  next_val = pagemap_get_checked(pbh->start_page + pbh->length);
-  pbh_t* next_pbh = ((uintptr_t)next_val & HUGE_MALLOC_MARK)
-                    ? NULL : (pbh_t*)next_val;
-
+  pbh_t* next_pbh = ((uintptr_t)next_val & HUGE_MALLOC_MARK) ? NULL : (pbh_t*)next_val;
   if (prev_pbh && (prev_pbh->status == PBH_ON_FREE_LIST)) {
     prev_pbh->length += pbh->length;
-
     // If the coalesced length is the same as the length of superpage,
     // we don't need to update more because superpage will be freed.
     if (prev_pbh->length == SUPERPAGE_LEN) {
@@ -745,42 +690,30 @@ static void sph_coalesce_pbs(pbh_t* pbh) {
     } else if (next_pbh && (next_pbh->status == PBH_ON_FREE_LIST)) {
       // Both prev_pbh and next_pbh are free. Coalesce together.
       uint32_t next_len = next_pbh->length;
-
       prev_pbh->length += next_len;
       if (prev_pbh->length == SUPERPAGE_LEN) return;
-
       // Update the pagemap and deallocate next_pbh.
       pagemap_set_range(next_pbh->start_page, next_len, prev_pbh);
       pbh_free(next_pbh);
     }
-
     // Update the pagemap and deallocate pbh.
     pagemap_set_range(pbh->start_page, pbh->length, prev_pbh);
     pbh_free(pbh);
   } else if (next_pbh && (next_pbh->status == PBH_ON_FREE_LIST)) {
     // Only next_pbh is free.
     uint32_t next_len = next_pbh->length;
-
     pbh->length += next_len;
     if (pbh->length == SUPERPAGE_LEN) return;
-
     // Update the pagemap and deallocate next_pbh.
     pagemap_set_range(next_pbh->start_page, next_len, pbh);
     pbh_free(next_pbh);
   }
 }
-
-
 static bool take_superpage(tlh_t* tlh, sph_t* sph) {
   // Try to change the ownership of superpage.
   uint32_t expected = DEAD_OWNER;
-  if (!atomic_compare_exchange_strong(&sph->omark.owner_id, &expected, tlh->thread_id)) 
-    return false;
-
-  if (sph->remote_pb_list != NULL) {
-    sph_get_remote_pbs(sph);
-  }
-
+  if (!atomic_compare_exchange_strong(&sph->omark.owner_id, &expected, t_thread_id)) return false;
+  if (sph->remote_pb_list != NULL) {sph_get_remote_pbs(sph);}
   // Adopt all pbhs in the superpage.
   pbh_t* pbh = GET_FIRST_PBH(sph);
   uint32_t total_len = 0;
@@ -788,7 +721,6 @@ static bool take_superpage(tlh_t* tlh, sph_t* sph) {
     uint32_t len = pbh->length;
     assert(len > 0);
     assert(pbh->index == (total_len + 1));
-
     if (pbh->status == PBH_ON_FREE_LIST) {
       pbh_list_prepend(&tlh->free_pb_list[len-1], pbh);
     } else if (pbh->sizeclass < NUM_CLASSES) {
@@ -802,41 +734,29 @@ static bool take_superpage(tlh_t* tlh, sph_t* sph) {
         pbh_list_prepend(&b_list->pbh_list, pbh);
       }
     }
-
     // next pbh
     total_len += len;
     pbh = pbh + len;
   }
   assert(total_len == SUPERPAGE_LEN);
-
   // Prepend the adopted superpage to the superpage list.
   sph_list_prepend(&tlh->sp_list, sph);
-
   return true;
 }
-
-
 static void finish_superpages(tlh_t* tlh) {
   sph_t** sp_list = &tlh->sp_list;
-
   ownermark_t live_mark, dead_mark;
   live_mark.owner_id    = (*sp_list)->omark.owner_id;
   live_mark.finish_mark = NONE;
   dead_mark.owner_id    = DEAD_OWNER;
   dead_mark.finish_mark = NONE;
-
   do {
     sph_t* sph = sph_list_pop(sp_list);
     assert(sph->omark.owner_id == live_mark.owner_id);
-
     while (true) {
       sph->omark.finish_mark = NONE;
-
       // Try to clean up the superpage.
-      if (try_to_free_superpage(sph)) {
-        break;
-      }
-
+      if (try_to_free_superpage(sph)) {break;}
       // If the superpage was not freed, make it dead.
       if (atomic_compare_exchange_strong((uint64_t*)&sph->omark, &live_mark.with, dead_mark.with)) {
         LOG_D("[T%u] DEAD SUPERPAGE\n", tlh->thread_id);
@@ -845,78 +765,57 @@ static void finish_superpages(tlh_t* tlh) {
     } //end while
   } while (*sp_list != NULL);
 }
-
-
 static bool try_to_free_superpage(sph_t* sph) {
-  if (sph->remote_pb_list != NULL) {
-    sph_get_remote_pbs(sph);
-  }
-
+  if (sph->remote_pb_list != NULL) {sph_get_remote_pbs(sph);}
   pbh_t* pbh = GET_FIRST_PBH(sph);
   pbh_t* prev_pbh = NULL;
-
   uint32_t cnt_inuse = 0;
   uint32_t total_len = 0;
   while (total_len < SUPERPAGE_LEN) {
     uint32_t len = pbh->length;
     assert(len > 0);
-
     total_len += len;
-
     if (pbh->status != PBH_ON_FREE_LIST && pbh->sizeclass < NUM_CLASSES) {
       uint32_t count = pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt;
       if (count == get_blocks_for_class(pbh->sizeclass)) {
         // PBH became totally free.
         pbh_field_init(pbh);
-
         // Try coalescing.
         pbh_t* next_pbh = (total_len < SUPERPAGE_LEN) ? (pbh + len) : NULL;
         if (prev_pbh && prev_pbh->status == PBH_ON_FREE_LIST) {
           pagemap_set_range(pbh->start_page, len, prev_pbh);
           pbh_free(pbh);
-
           prev_pbh->length += len;
           if (next_pbh && next_pbh->status == PBH_ON_FREE_LIST) {
             uint32_t next_len = next_pbh->length;
             prev_pbh->length += next_len;
             pagemap_set_range(next_pbh->start_page, next_len, prev_pbh);
             pbh_free(next_pbh);
-
             total_len += next_len;
             pbh = next_pbh + next_len;
-          } else {
-            pbh = pbh + len;
-          }
-          
+          } else {pbh = pbh + len;}
           continue;
         } else if (next_pbh && next_pbh->status == PBH_ON_FREE_LIST) {
           uint32_t next_len = next_pbh->length;
           pbh->length += next_len;
           pagemap_set_range(next_pbh->start_page, next_len, pbh);
           pbh_free(next_pbh);
-
           total_len += next_len;
           prev_pbh = pbh;
           pbh = next_pbh + next_len;
-
           continue;
         }
-      } else {
-        cnt_inuse++;
-      }
+      } else {cnt_inuse++;}
     }
-
     // next pbh
     prev_pbh = pbh;
     pbh = pbh + len;
   }
   assert(total_len == SUPERPAGE_LEN);
-
   if (cnt_inuse == 0) {
     // Superpage became totall free.
     LOG_D("[T%u] EMPTY: %p\n", TID(), sph);
     sph->hazard_mark = true;
-
     // Link the superpage to g_free_sp_list
     atomic_fetch_add_explicit(&g_free_sp_len,1,memory_order_relaxed);
     sph_t* global_list;
@@ -924,23 +823,16 @@ static bool try_to_free_superpage(sph_t* sph) {
     do {
       sph->next = global_list;
     } while (!atomic_compare_exchange_weak(&g_free_sp_list, &global_list, sph));
-
     // Update pagemap.
     pagemap_set_range(sph->start_page, SUPERPAGE_LEN, NULL);
-
     return true;
   }
-
   return false;
 }
-
-
 static inline void sph_link_init(sph_t* sph) {
   sph->next = sph;
   sph->prev = sph;
 }
-
-
 static inline void sph_list_prepend(sph_t** list, sph_t* sph) {
   if (*list != NULL) {
     sph_t* top = *list;
@@ -948,28 +840,19 @@ static inline void sph_list_prepend(sph_t** list, sph_t* sph) {
     sph->prev = top->prev;
     top->prev->next = sph;
     top->prev = sph;
-  } else {
-    sph_link_init(sph);
-  }
+  } else {sph_link_init(sph);}
   *list = sph;
 }
-
-
 static inline sph_t* sph_list_pop(sph_t** list) {
   assert(*list != NULL);
-
   sph_t* sph = *list;
   *list = (sph != sph->next) ? sph->next : NULL;
-
   // Remove the superpage from the list.
   sph->prev->next = sph->next;
   sph->next->prev = sph->prev;
   sph_link_init(sph);
-
   return sph;
 }
-
-
 static inline void sph_list_remove(sph_t** list, sph_t* sph) {
   if (sph == sph->next) {
     assert(*list == sph);
@@ -988,77 +871,55 @@ static inline void sph_list_remove(sph_t** list, sph_t* sph) {
 static inline pbh_t* pbh_alloc(sph_t* sph, size_t page_id, size_t len) {
   uint32_t pbh_idx = page_id - sph->start_page + 1;
   assert(pbh_idx > 0 && pbh_idx <= SUPERPAGE_LEN);
-
   pbh_t* new_pbh = (pbh_t*)sph + pbh_idx;
   memset((void*)new_pbh, 0, sizeof(pbh_t));
   new_pbh->start_page = page_id;
   new_pbh->length     = len;
   new_pbh->index      = pbh_idx;
-
   return new_pbh;
 }
-
-
 /* Deallocate the pbh. */
 static inline void pbh_free(pbh_t* val) {(void)val;}
-
-
-static inline void pbh_add_blocks(tlh_t* tlh, pbh_t* pbh,
-                                 void* start_blk, void* end_blk, uint32_t N) {
+static inline void pbh_add_blocks(tlh_t* tlh, pbh_t* pbh,void* start_blk, void* end_blk, uint32_t N) {
   sph_t* sph = pbh_get_superpage(pbh);
   if (UNLIKELY(sph->omark.owner_id != tlh->thread_id)) {
     // Try to free blocks to the owner.
-    if (remote_free(tlh, pbh, start_blk, end_blk, N))
-      return;
+    if (remote_free(tlh, pbh, start_blk, end_blk, N))return;
   }
-
   // Return to the local pbh.
   uint32_t cl = pbh->sizeclass;
   blk_list_t* b_list = &tlh->blk_list[cl];
-
-  uint32_t cnt_ref = get_blocks_for_class(cl) - 
-                     (pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt);
+  uint32_t cnt_ref = get_blocks_for_class(cl) - (pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt);
   if (cnt_ref == N) {
     // PBH becomes totally free.
     pbh_list_remove(&b_list->pbh_list, pbh);
     pb_free(tlh, pbh);
   } else {
     // Move this pbh to the first of pbh list.
-    if (b_list->pbh_list != pbh) {
-      pbh_list_move_to_first(&b_list->pbh_list, pbh);
-    }
-
+    if (b_list->pbh_list != pbh) {pbh_list_move_to_first(&b_list->pbh_list, pbh);}
     // Prepend to the the free list of pbh.
     SET_NEXT(end_blk, pbh->free_list);
     pbh->free_list = start_blk;
     pbh->cnt_free += N;
   }
 }
-
-
 static void pbh_add_unused(tlh_t* tlh, pbh_t* pbh, void* unused, uint32_t N) {
   uint32_t cl = pbh->sizeclass;
   blk_list_t* b_list = &tlh->blk_list[cl];
-
-  uint32_t cnt_ref = get_blocks_for_class(cl) - 
-                     (pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt);
+  uint32_t cnt_ref = get_blocks_for_class(cl) - (pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt);
   if (cnt_ref == N) {
     // PBH becomes totally free.
     pbh_list_remove(&b_list->pbh_list, pbh);
     pb_free(tlh, pbh);
   } else {
     // Move this pbh to the first of pbh list.
-    if (b_list->pbh_list != pbh) {
-      pbh_list_move_to_first(&b_list->pbh_list, pbh);
-    }
-
+    if (b_list->pbh_list != pbh) {pbh_list_move_to_first(&b_list->pbh_list, pbh);}
     // Add the unallocateed chunk to pbh.
     if (pbh->cnt_unused == 0) {
       pbh->unallocated = unused;
       pbh->cnt_unused  = N;
       return;
     } 
-
     // PBH already has a unallocated chunk. This may be due to block coloring.
     // We split the smaller chunk between two unallocated chunks.
     void* start_blk;
@@ -1067,14 +928,12 @@ static void pbh_add_unused(tlh_t* tlh, pbh_t* pbh, void* unused, uint32_t N) {
     if (pbh->cnt_unused < N) {
       start_blk = pbh->unallocated;
       block_num = pbh->cnt_unused;
-
       pbh->unallocated  = unused;
       pbh->cnt_unused = N;
     } else {
       start_blk = unused;
       block_num = N;
     }
-
     // Split and prepend split blocks to the free list of pbh.
     end_blk  = start_blk;
     blk_size = get_size_for_class(cl);
@@ -1088,20 +947,14 @@ static void pbh_add_unused(tlh_t* tlh, pbh_t* pbh, void* unused, uint32_t N) {
     pbh->cnt_free += block_num;
   }
 }
-
-
 static inline sph_t* pbh_get_superpage(pbh_t* pbh) {
   assert(pbh->index > 0 && pbh->index <= SUPERPAGE_LEN);
   return (sph_t*)(pbh - pbh->index);
 }
-
-
 static inline void pbh_link_init(pbh_t* pbh) {
   pbh->next = pbh;
   pbh->prev = pbh;
 }
-
-
 static inline void pbh_field_init(pbh_t* pbh) {
   pbh->status      = PBH_ON_FREE_LIST;
   pbh->cnt_free    = 0;
@@ -1110,8 +963,6 @@ static inline void pbh_field_init(pbh_t* pbh) {
   pbh->unallocated = NULL;
   pbh->remote_list.together = 0;
 }
-
-
 static inline void pbh_list_prepend(pbh_t** list, pbh_t* pbh) {
   if (*list != NULL) {
     pbh_t* top = *list;
@@ -1119,13 +970,9 @@ static inline void pbh_list_prepend(pbh_t** list, pbh_t* pbh) {
     pbh->prev = top->prev;
     top->prev->next = pbh;
     top->prev = pbh;
-  } else {
-    pbh_link_init(pbh);
-  }
+  } else {pbh_link_init(pbh);}
   *list = pbh;
 }
-
-
 static inline void pbh_list_append(pbh_t** list, pbh_t* pbh) {
   if (*list != NULL) {
     pbh_t* top = *list;
@@ -1138,23 +985,16 @@ static inline void pbh_list_append(pbh_t** list, pbh_t* pbh) {
     *list = pbh;
   }
 }
-
-
 static inline pbh_t* pbh_list_pop(pbh_t** list) {
   assert(*list != NULL);
-
   pbh_t* pbh = *list;
   *list = (pbh != pbh->next) ? pbh->next : NULL;
-
   // Remove the pbh from the list.
   pbh->prev->next = pbh->next;
   pbh->next->prev = pbh->prev;
   pbh_link_init(pbh);
-
   return pbh;
 }
-
-
 static inline void pbh_list_remove(pbh_t** list, pbh_t* pbh) {
   if (pbh == pbh->next) {
     assert(*list == pbh);
@@ -1166,28 +1006,20 @@ static inline void pbh_list_remove(pbh_t** list, pbh_t* pbh) {
     pbh_link_init(pbh);
   }
 }
-
-
 static inline void pbh_list_move_to_first(pbh_t** list, pbh_t* pbh) {
   assert(pbh != pbh->next);
-
   // First remove the pbh.
   pbh->prev->next = pbh->next;
   pbh->next->prev = pbh->prev;
-
   // Prepend it.
   pbh_t* top = *list;
   pbh->next = top;
   pbh->prev = top->prev;
   top->prev->next = pbh;
   top->prev = pbh;
-
   // Make it the first.
   *list = pbh;
 }
-
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Page Block Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -1204,19 +1036,16 @@ static pbh_t* pb_alloc(tlh_t* tlh, size_t page_len) {
     if (first_sph->remote_pb_list) {
       sph_get_remote_pbs(first_sph);
       tlh->sp_list = first_sph->next;
-
       pbh = pb_alloc_from_tlh(tlh, page_len);
       if (pbh) return pbh;
     }
   }
-
   // Request memory from the global Free Superpage List or the OS.
   sph_t* sph = sph_alloc(tlh);
   size_t new_page_id = sph->start_page;
   pbh = pbh_alloc(sph, new_page_id, page_len);
   pbh->status = PBH_IN_USE;
   pagemap_set_range(new_page_id, page_len, pbh);
-
   // remained pages
   assert(page_len < SUPERPAGE_LEN);
   size_t rem_start = new_page_id + page_len;
@@ -1225,40 +1054,27 @@ static pbh_t* pb_alloc(tlh_t* tlh, size_t page_len) {
   rem_pbh->status = PBH_ON_FREE_LIST;
   pbh_list_prepend(&tlh->free_pb_list[rem_len-1], rem_pbh);
   pagemap_set_range(rem_start, rem_len, rem_pbh);
-
   return pbh;
 }
-
-
 static pbh_t* pb_alloc_from_tlh(tlh_t* tlh, size_t page_len) {
   // Page class index is one less than page_len.
   int32_t pcl = page_len - 1;
-
   for (int32_t c = pcl; c < NUM_PAGE_CLASSES; c++) {
     if (tlh->free_pb_list[c] != NULL) {
       // Pop the first pbh.
       pbh_t* pbh = pbh_list_pop(&tlh->free_pb_list[c]);
       assert((pbh->length - 1) == c);
-
       // Make this pbh in-use, and if necessary, split it.
       pbh->status = PBH_IN_USE;
       if (c > pcl) pb_split(tlh, pbh, page_len);
-
       return pbh;
     }
   }
-
   return NULL;
 }
-
-
 static void pb_free(tlh_t* tlh, pbh_t* pbh) {
   assert(pbh->length <= SUPERPAGE_LEN);
-
-  if (pbh->length < SUPERPAGE_LEN) {
-    pbh = pb_coalesce(tlh, pbh);
-  }
-
+  if (pbh->length < SUPERPAGE_LEN) {pbh = pb_coalesce(tlh, pbh);}
   // If the freed pbh makes superpage totally empty, release superpage.
   if (pbh->length == SUPERPAGE_LEN) {
     // Release the superpage.
@@ -1266,13 +1082,10 @@ static void pb_free(tlh_t* tlh, pbh_t* pbh) {
   } else {
     // Update the pbh status.
     pbh_field_init(pbh);
-
     // Insert it into the Free Page Block List.
     pbh_list_prepend(&tlh->free_pb_list[pbh->length-1], pbh);
   }
 }
-
-
 static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
   sph_t* sph = pbh_get_superpage(pbh);
   sph = hazard_ptr_set(tlh->hazard_ptr,&sph);
@@ -1284,7 +1097,6 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
         return;
       }
     }
-
     void* top = sph->remote_pb_list;
     SET_NEXT(pb, top);
     if (atomic_compare_exchange_strong(&sph->remote_pb_list, &top, pb)) {
@@ -1292,14 +1104,9 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
       break;
     }
   }
-
-  if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
-    take_superpage(tlh, sph);
-  }
+  if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {take_superpage(tlh, sph);}
   hazard_ptr_clr(tlh->hazard_ptr,sph);
 }
-
-
 /*
    Split the pbh into two pbhs.
    The first pbh has len length and it will be used.
@@ -1309,36 +1116,26 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
 static inline void pb_split(tlh_t* tlh, pbh_t* pbh, size_t len) {
   assert(pbh->length > len);
   size_t rem_len = pbh->length - len;
-
   // Update the original pbh.
   pbh->length = len;
-
   // Make a pbh for a remaining run of pages and update free list.
   size_t rem_start = pbh->start_page + len;
   pbh_t* rem_pbh   = pbh_alloc(pbh_get_superpage(pbh), rem_start, rem_len);
   rem_pbh->status  = PBH_ON_FREE_LIST;
   pbh_list_prepend(&tlh->free_pb_list[rem_len-1], rem_pbh);
-
   // Update the pagemap.
   pagemap_set_range(rem_start, rem_len, rem_pbh);
 }
-
-
 static inline pbh_t* pb_coalesce(tlh_t* tlh, pbh_t* pbh) {
   pbh_t* prev_pbh = (pbh_t*)pagemap_get_checked(pbh->start_page - 1);
   assert(((uintptr_t)prev_pbh & HUGE_MALLOC_MARK) == 0);
-
   void*  next_val = pagemap_get_checked(pbh->start_page + pbh->length);
-  pbh_t* next_pbh = ((uintptr_t)next_val & HUGE_MALLOC_MARK)
-                    ? NULL : (pbh_t*)next_val;
-
+  pbh_t* next_pbh = ((uintptr_t)next_val & HUGE_MALLOC_MARK) ? NULL : (pbh_t*)next_val;
   if (prev_pbh && (prev_pbh->status == PBH_ON_FREE_LIST)) {
     // Remove prev_pbh form the page list.
     uint32_t prev_len = prev_pbh->length;
     pbh_list_remove(&tlh->free_pb_list[prev_len-1], prev_pbh);
-
     prev_pbh->length += pbh->length;
-
     // If the coalesced length is same as the length of superpage,
     // we don't need to update more because superpage will be freed.
     if (prev_pbh->length == SUPERPAGE_LEN) {
@@ -1348,33 +1145,26 @@ static inline pbh_t* pb_coalesce(tlh_t* tlh, pbh_t* pbh) {
       // Both prev_pbh and next_pbh are free. Coalesce together.
       uint32_t next_len = next_pbh->length;
       pbh_list_remove(&tlh->free_pb_list[next_len-1], next_pbh);
-
       prev_pbh->length += next_len;
       if (prev_pbh->length == SUPERPAGE_LEN) return prev_pbh;
-
       // Update the pagemap and deallocate next_pbh.
       pagemap_set_range(next_pbh->start_page, next_len, prev_pbh);
       pbh_free(next_pbh);
     }
-
     // Update the pagemap and deallocate pbh.
     pagemap_set_range(pbh->start_page, pbh->length, prev_pbh);
     pbh_free(pbh);
-
     return prev_pbh;
   } else if (next_pbh && (next_pbh->status == PBH_ON_FREE_LIST)) {
     // Only next_pbh is free.
     uint32_t next_len = next_pbh->length;
     pbh_list_remove(&tlh->free_pb_list[next_len-1], next_pbh);
-
     pbh->length += next_len;
     if (pbh->length == SUPERPAGE_LEN) return pbh;
-
     // Update the pagemap and deallocate next_pbh.
     pagemap_set_range(next_pbh->start_page, next_len, pbh);
     pbh_free(next_pbh);
   }
-
   return pbh;
 }
 
@@ -1385,22 +1175,21 @@ static inline pbh_t* pb_coalesce(tlh_t* tlh, pbh_t* pbh) {
 ////////////////////////////////////////////////////////////////////////////
 static void tlh_init() {
   // Set the thread ID
-  uint32_t tid = atomic_fetch_add_explicit(&g_id,1,memory_order_relaxed);
-  if (tid == MAX_NUM_THREADS) {
-    HANDLE_ERROR("Too many threads are created...\n");
+  uint32_t tid = t_thread_id;
+  if(tid){
+    LOG_D("[T%u] ( resurecting )\n", tid);
+  }else{
+    tid = atomic_fetch_add_explicit(&g_id,1,memory_order_relaxed);
+    t_thread_id = tid;
   }
-
+  if (tid == MAX_NUM_THREADS) {HANDLE_ERROR("Too many threads are created...\n");}
   // Increase the number of currently running threads.
   atomic_fetch_add_explicit(&g_thread_num,1,memory_order_relaxed);
-
   tlh_t* tlh = &l_tlh;
   tlh->thread_id = tid;
-
   // Allocate a hazard pointer.
   tlh->hazard_ptr = hazard_ptr_alloc();
 }
-
-
 static void tlh_clear(tlh_t* tlh) {
 #ifdef MALLOC_USE_PAGE_BLOCK_CACHE
   pb_cache_t* pb_cache = &tlh->pb_cache;
@@ -1415,7 +1204,6 @@ static void tlh_clear(tlh_t* tlh) {
 #endif
   for (uint32_t cl = 0; cl < NUM_CLASSES; cl++) {
     blk_list_t* b_list = &tlh->blk_list[cl];
-
     if (b_list->free_blk_list != NULL) {
       assert(b_list->cnt_free > 0);
       tlh_return_list(tlh, cl);
@@ -1429,9 +1217,7 @@ static void tlh_clear(tlh_t* tlh) {
     }
   }
   // If there remains superpages, make them orphaned.
-  if (tlh->sp_list != NULL) {
-    finish_superpages(tlh);
-  }
+  if (tlh->sp_list != NULL) {finish_superpages(tlh);}
   // Deallocate the hazard pointer.
   hazard_ptr_free(tlh->hazard_ptr);
   tlh->hazard_ptr = NULL;
@@ -1483,35 +1269,23 @@ static void tlh_return_unused(tlh_t* tlh, uint32_t cl) {
   void* unallocated = b_list->ptr_to_unused;
   size_t page_id = (size_t)unallocated >> PAGE_SHIFT;
   pbh_t* pbh = (pbh_t*)pagemap_get(page_id);
-
   pbh_add_unused(tlh, pbh, unallocated, b_list->cnt_unused);
-
   b_list->ptr_to_unused = NULL;
   b_list->cnt_unused = 0;
 }
-
-
 static void tlh_return_pbhs(tlh_t* tlh, uint32_t cl) {
   blk_list_t* b_list = &tlh->blk_list[cl];
-
   uint32_t blks_per_pbh = get_blocks_for_class(cl);
   do {
     pbh_t* pbh = pbh_list_pop(&b_list->pbh_list);
-
     // Try again if we can free the pbh.
     uint32_t count = pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt;
-    if (count == blks_per_pbh) {
-      pb_free(tlh, pbh);
-    }
-
+    if (count == blks_per_pbh) {pb_free(tlh, pbh);}
     // If pbh has some unfreed blocks, just keep it in the superpage.
     // This is safe because superpage will not be freed.
     // Another thread will adopt the superpage itself.
   } while (b_list->pbh_list != NULL);
 }
-
-
-
 ////////////////////////////////////////////////////////////////////////////
 // Page Block Cache Functions
 ////////////////////////////////////////////////////////////////////////////
@@ -1766,13 +1540,13 @@ static inline void* huge_malloc(size_t page_len) {
   return ret;
 }
 static inline bool remote_free(tlh_t* tlh, pbh_t* pbh, void* first, void* last, uint32_t N) {
-  sph_t* sph = pbh_get_superpage(pbh);
   uint32_t cl = pbh->sizeclass;
   void* start_addr = (void*)(pbh->start_page << PAGE_SHIFT);
   uint32_t size = get_size_for_class(cl);
   uint16_t blk_idx = (uintptr_t)(first - start_addr) / size;
   remote_list_t new_top;
   new_top.head = blk_idx;
+  sph_t* sph = pbh_get_superpage(pbh);
   sph = hazard_ptr_set(tlh->hazard_ptr,&sph);
   while (true) {
     if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
@@ -1892,9 +1666,9 @@ static inline void huge_free(void* ptr, size_t size) {
 void *sf_malloc(size_t size) {
   inc_cnt_malloc();
   malloc_timer_start();
-  if (UNLIKELY(!g_initialized))       sf_malloc_init();
-  if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
-  if(!size) {malloc_timer_stop();return NULL;}
+  if(UNLIKELY(!size)) {malloc_timer_stop();return NULL;}
+  if (UNLIKELY(!atomic_load(&g_initialized)))  pthread_once(&g_init_once,sf_malloc_init);
+  if (UNLIKELY(l_tlh.thread_id == 0 || l_tlh.thread_id==DEAD_OWNER)) sf_malloc_thread_init();
   void* ret;
   if (size <= MAX_SIZE) {
     uint32_t cl = get_sizeclass(size);
@@ -1922,10 +1696,9 @@ void *sf_malloc(size_t size) {
 void sf_free(void *ptr) {
   inc_cnt_free();
   free_timer_start();
-
-  if (UNLIKELY(!g_initialized))       sf_malloc_init();
-  if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
   if (UNLIKELY(ptr == NULL)) {free_timer_stop();return;}
+  if (UNLIKELY(!atomic_load(&g_initialized)))  pthread_once(&g_init_once,sf_malloc_init);
+  if (UNLIKELY(l_tlh.thread_id == 0 || l_tlh.thread_id==DEAD_OWNER)) sf_malloc_thread_init();
 
   size_t page_id = (size_t)ptr >> PAGE_SHIFT;
   void* val = pagemap_get(page_id);
@@ -1985,10 +1758,9 @@ void *sf_calloc(size_t nmemb, size_t size) {
      it is not freed or moved. 
  */
 void *sf_realloc(void *ptr, size_t size) {
-#ifdef MALLOC_NEED_INIT
-  if (UNLIKELY(!g_initialized))       sf_malloc_init();
-  if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
-#endif
+  if(UNLIKELY(!ptr && !size))return NULL;
+  if (UNLIKELY(!atomic_load(&g_initialized)))  pthread_once(&g_init_once,sf_malloc_init);
+  if (UNLIKELY(l_tlh.thread_id == 0 || l_tlh.thread_id==DEAD_OWNER)) sf_malloc_thread_init();
   // If ptr is NULL, then the call is equivalent to malloc(size), for all 
   // values of size.
   if (ptr == NULL) {return sf_malloc(size);}
@@ -2044,10 +1816,9 @@ void *sf_realloc(void *ptr, size_t size) {
    - ENOMEM: There was insufficient memory to fulfill the allocation request. 
  */
 int sf_posix_memalign(void **memptr, size_t alignment, size_t size) {
-#ifdef MALLOC_NEED_INIT
-  if (UNLIKELY(!g_initialized))       sf_malloc_init();
-  if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
-#endif
+  if(UNLIKELY(!memptr ))return EINVAL;
+  if (UNLIKELY(!atomic_load(&g_initialized)))  pthread_once(&g_init_once,sf_malloc_init);
+  if (UNLIKELY(l_tlh.thread_id == 0 || l_tlh.thread_id==DEAD_OWNER)) sf_malloc_thread_init();
   inc_cnt_memalign();
   memalign_timer_start();
   if (size == 0) {
@@ -2122,10 +1893,9 @@ int sf_posix_memalign(void **memptr, size_t alignment, size_t size) {
    - Return NULL if the request fails
  */
 void *sf_valloc(size_t size) {
-#ifdef MALLOC_NEED_INIT
+  if(size==0)return NULL;
   if (UNLIKELY(!g_initialized))       sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
-#endif
   void *free_blk;
 #ifndef NDEBUG
   int ret = 
@@ -2148,10 +1918,9 @@ void *sf_valloc(size_t size) {
    - Return NULL if the request fails
  */
 void *sf_memalign(size_t boundary, size_t size) {
-#ifdef MALLOC_NEED_INIT
+  if(size==0 || (boundary && (boundary & (boundary-1)))) return NULL;
   if (UNLIKELY(!g_initialized))       sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
-#endif
   void *free_blk;
 #ifndef NDEBUG
   int ret = 

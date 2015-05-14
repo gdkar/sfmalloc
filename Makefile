@@ -12,13 +12,13 @@ LIBS = -lpthread -lrt -ldl
 LIB_MALLOC = $(addprefix .libs/,libsfmalloc.a libsfmalloc.so libsfmalloc-debug.so)
 LIB_DIR = .libs
 OBJ_DIR = .objs
-OPT_FLAGS = -O3 -Wall -Wextra -g -mmmx -msse -march=native \
+OPT_FLAGS = -O3 -Wall -Wextra -Werror -g -mmmx -msse -march=native \
   -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc \
   -fno-builtin-calloc -fno-builtin-cfree \
   -fno-builtin-memalign -fno-builtin-posix_memalign \
   -fno-builtin-valloc -fno-builtin-pvalloc -fno-exceptions
 INC_FLAGS = 
-DEFS += -D_REENTRANT -DMALLOC_NEED_INIT -DMALLOC_NEED_THREAD_INIT -DMALLOC_USE_STATIC_LINKING
+DEFS += -D_REENTRANT -DMALLOC_NEED_INIT -DMALLOC_NEED_THREAD_INIT #-DMALLOC_USE_STATIC_LINKING
 #DEFS += -D_REENTRANT -DNDEBUG
 
 CFLAGS = -std=gnu11 -fPIC -shared $(OPT_FLAGS) $(INC_FLAGS) $(DEFS) 

@@ -36,6 +36,7 @@ hazard_ptr_t* hazard_ptr_alloc() {
   return first_hptr;
 }
 void * _hazard_ptr_set(hazard_ptr_t*hp, void **target){
+  if(UNLIKELY(!hp ||!target))return NULL;
   void * t = *target;
   void * prev_t;
   hp->count ++;

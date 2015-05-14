@@ -46,28 +46,12 @@
 
 extern "C" {
   #include "sf_malloc_internal.h"
+  #include "sf_malloc_init.h"
   #include <pthread.h>
-  #include <cstdio>
 }
+#include <cstdio>
 extern  pthread_once_t g_init_once;
 extern  pthread_once_t g_exit_once;
 
-class SFMallocInit {
-public:
-  SFMallocInit() {
-    sf_malloc_init();
-#ifndef NDEBUG
-    std::fprintf(stderr,"SFMallocInit::SFMallocInit();\n");
-#endif
-//    pthread_once(&g_init_once,sf_malloc_init);
-  }
-  ~SFMallocInit() {
-#ifndef NDEBUG
-    std::fprintf(stderr,"SFMallocInit::~SFMallocInit();\n");
-#endif
-    sf_malloc_exit();
-    //pthread_once(&g_exit_once,sf_malloc_exit);
-  }
-};
-
-SFMallocInit sf_malloc_initializer = SFMallocInit();
+REGISTER_SFMALLOC_MODULE_INITIALIZER(alloc, fprintf(stderr,"in sfmalloc initailizer constructor\n"); pthread_once(&g_init_once,sf_malloc_init))
+REGISTER_SFMALLOC_MODULE_DESTRUCTOR (alloc, fprintf(stderr,"in sfmalloc initailizer constructor\n"); pthread_once(&g_exit_once,sf_malloc_exit))

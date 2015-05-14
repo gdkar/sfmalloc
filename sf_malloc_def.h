@@ -54,7 +54,7 @@
 #define MACHINE_BIT         64
 #define PAGE_SHIFT          12
 #define CACHE_LINE_SIZE     64
-#define MAX_NUM_THREADS     UINT_MAX
+#define MAX_NUM_THREADS     (((uint32_t)-1)-1)
 
 
 ////////////////////////////////////////////////////////////////////////////
@@ -62,7 +62,7 @@
 ////////////////////////////////////////////////////////////////////////////
 #define PAGE_SIZE           (1 << PAGE_SHIFT)
 #define MAX_SIZE            (8u * PAGE_SIZE)
-#define ALIGNMENT           8
+#define ALIGNMENT           16
 #define NUM_CLASSES         62
 #define MAX_SMALL_SIZE      1024
 #define CLASS_ARRAY_SIZE    ((((1<<PAGE_SHIFT)*8u + 127 + (120<<7)) >> 7) + 1)
@@ -82,7 +82,7 @@
 
 #define SUPERPAGE_LEN       (NUM_PAGE_CLASSES + 1)
 #define SUPERPAGE_SIZE      (SUPERPAGE_LEN * PAGE_SIZE)
-#define DEAD_OWNER          0
+#define DEAD_OWNER          ((uint32_t)-1)
 
 #define HUGE_MALLOC_MARK    0x1
 
@@ -121,15 +121,12 @@ typedef struct {
 #define PMAP_INTERIOR_LEN     (1 << PMAP_INTERIOR_BIT)
 #define PMAP_LEAF_BIT         (PMAP_BITS - 2 * PMAP_INTERIOR_BIT)
 #define PMAP_LEAF_LEN         (1 << PMAP_LEAF_BIT)
-
 typedef struct {
   void* val[PMAP_LEAF_LEN];
 } pagemap_leaf_t;
-
 typedef struct {
   pagemap_leaf_t* leaf[PMAP_INTERIOR_LEN];
 } pagemap_node_t;
-
 typedef struct {
   pagemap_node_t* node[PMAP_INTERIOR_LEN];
 } pagemap_t CACHE_LINE_ALIGN;
@@ -152,7 +149,10 @@ typedef struct sph {
   struct sph* prev;            // prev pointer in linked list
   size_t      start_page;      // starting page number
   volatile ownermark_t omark;  // owner_id + finish_mark
-  void*       remote_pb_list;  // remote list for large blocks 
+  union{
+    void*       remote_pb_list;  // remote list for large blocks 
+    uint64_t    remote_pb_list_uint;
+  };
   uint32_t    hazard_mark;
 } sph_t;
 //-------------------------------------------------------------------
@@ -180,11 +180,11 @@ struct pbh {
   uint8_t  sizeclass;     // size-calss for small blocks
   uint8_t  status;        // status of the pbh
   uint32_t cnt_free;      // number of free blocks in free list
-  uint32_t cnt_unused;    // number of unused free blocks    
+  uint32_t cnt_unused;    // number of fresh blocks at the top of the block
   uint16_t page_color;    // for page coloring
   uint16_t block_color;   // for block coloring
   void*    free_list;     // pointer to the first free block
-  void*    unallocated;   // pointer to the first unused free block
+  void*    unallocated;   // pointer to the first fresh block
   volatile remote_list_t  remote_list ;   // for remote free
 };
 enum {
