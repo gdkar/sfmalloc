@@ -59,9 +59,9 @@
 
 #include "sf_malloc_ctrl.h"
 #include "sf_malloc_def.h"
-#include "sf_malloc_stat.h"
-#include "sf_malloc_hazard.h"
-#include "sf_malloc_asm.h"
+#include "include/sf_malloc_stat.h"
+#include "include/sf_malloc_hazard.h"
+#include "include/sf_malloc_asm.h"
 
 #include <assert.h>
 

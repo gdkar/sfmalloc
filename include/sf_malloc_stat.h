@@ -40,7 +40,7 @@
 
 #ifndef __SF_MALLOC_STAT_H__
 #define __SF_MALLOC_STAT_H__
-#include "sf_malloc_asm.h"
+#include "include/sf_malloc_asm.h"
 #ifdef MALLOC_STATS
 static double CPU_CLOCK = 1.0;
 

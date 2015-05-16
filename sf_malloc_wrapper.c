@@ -46,7 +46,7 @@
 #define __USE_GNU
 #include <dlfcn.h>
 
-#include "sf_malloc_internal.h"
+#include "include/sf_malloc_internal.h"
 
 
 typedef int (*pthread_create_fpt)(pthread_t *, const pthread_attr_t *, void *(*)(void*), void *);

@@ -1,6 +1,6 @@
-#include "sf_malloc_hazard.h"
-#include "sf_malloc_asm.h"
-#include "sf_malloc_util.h"
+#include "include/sf_malloc_hazard.h"
+#include "include/sf_malloc_asm.h"
+#include "include/sf_malloc_util.h"
 #include <alloca.h>
 #include <string.h>
 #include <stdatomic.h>

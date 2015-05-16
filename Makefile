@@ -17,7 +17,7 @@ OPT_FLAGS = -O3 -Wall -Wextra -Werror -g -mmmx -msse -march=native \
   -fno-builtin-calloc -fno-builtin-cfree \
   -fno-builtin-memalign -fno-builtin-posix_memalign \
   -fno-builtin-valloc -fno-builtin-pvalloc -fno-exceptions
-INC_FLAGS = 
+INC_FLAGS = -I./ -I./include
 DEFS += -D_REENTRANT -DMALLOC_NEED_INIT -DMALLOC_NEED_THREAD_INIT #-DMALLOC_USE_STATIC_LINKING
 #DEFS += -D_REENTRANT -DNDEBUG
 
@@ -35,7 +35,7 @@ static: .libs/libsfmalloc.a
 
 dirs:
 	mkdir -p $(OBJ_DIR) $(LIB_DIR)
-.objs/sf_malloc.o: sf_malloc.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h 
+.objs/sf_malloc.o: sf_malloc.c include/sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h 
 	$(CC) $(CFLAGS) -c $< -o $@
 .objs/sf_malloc_wrapper.o: sf_malloc_wrapper.c
 	$(CC) $(CFLAGS) -c $< -o $@

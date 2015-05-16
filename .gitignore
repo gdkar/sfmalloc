@@ -1,7 +1,7 @@
 *~
 _*
-o.objs/
-o.libs/
+.objs/
+.libs/
 /.passwd.*
 .gdb_history
 cscope.out

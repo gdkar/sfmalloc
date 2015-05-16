@@ -45,8 +45,8 @@
  */
 
 extern "C" {
-  #include "sf_malloc_internal.h"
-  #include "sf_malloc_init.h"
+  #include "include/sf_malloc_internal.h"
+  #include "include/sf_malloc_init.h"
   #include <pthread.h>
 }
 #include <cstdio>
