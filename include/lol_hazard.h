@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "sf_malloc_def.h"
+#include "lol_def.h"
 void* do_mmap(void*,size_t );
 typedef struct hazard_ptr hazard_ptr_t;
 typedef struct hazard_list hazard_list_t;

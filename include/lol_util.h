@@ -1,12 +1,12 @@
 #ifndef SF_MALLOC_UTIL_H
 #define SF_MALLOC_UTIL_H
 #ifdef __cplusplus
-#include "include/sf_malloc_init.h"
+#include "include/lol_init.h"
 extern "C" {
 #endif
-#include "include/sf_malloc_asm.h"
-#include "sf_malloc_def.h"
-#include "include/sf_malloc_internal.h"
+#include "include/lol_asm.h"
+#include "lol_def.h"
+#include "include/lol_internal.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>

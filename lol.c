@@ -57,11 +57,11 @@
 #include <errno.h>
 #include <pthread.h>
 
-#include "sf_malloc_ctrl.h"
-#include "sf_malloc_def.h"
-#include "include/sf_malloc_stat.h"
-#include "include/sf_malloc_hazard.h"
-#include "include/sf_malloc_asm.h"
+#include "lol_config.h"
+#include "include/lol_def.h"
+#include "include/lol_stat.h"
+#include "include/lol_hazard.h"
+#include "include/lol_asm.h"
 
 #include <assert.h>
 
