@@ -39,18 +39,15 @@
 /*****************************************************************************/
 
 #include <new>
-#include <unistd.h>
-#include <stddef.h>
-#include <stdint.h>
+#include <memory>
+#include <cstdint>
 extern "C" {
   void *malloc(size_t);
   void free(void *);
 }
-
 #ifndef __THROW
 # define __THROW
 #endif
-
 void *operator new(size_t size) throw (std::bad_alloc) {return malloc(size);}
 void operator delete(void *p) __THROW {free(p);}
 void *operator new[](size_t size) throw (std::bad_alloc) {return malloc(size);}

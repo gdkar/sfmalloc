@@ -46,7 +46,7 @@
 #define __USE_GNU
 #include <dlfcn.h>
 
-#include "sf_malloc_internal.h"
+#include "include/sf_malloc_internal.h"
 
 
 typedef int (*pthread_create_fpt)(pthread_t *, const pthread_attr_t *, void *(*)(void*), void *);
@@ -80,8 +80,7 @@ static void *wrapper(void *warg) {
   return result;
 }
 /* Wrapper pthread_create() to call the wrapper function of start_routine */
-int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
-                   void *(*start_routine)(void *), void *arg) {
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg) {
   if (thread_create == NULL) {dlsym_pthread_create();}
   wrapper_arg_t *warg = (wrapper_arg_t *)malloc(sizeof(wrapper_arg_t));
   if (warg == NULL) {

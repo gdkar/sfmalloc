@@ -1,0 +1,12 @@
+*~
+_*
+.objs/
+.libs/
+/.passwd.*
+.gdb_history
+cscope.out
+cscope.files
+tags
+*.swp
+*.log
+cscope.*

@@ -42,7 +42,7 @@
 #define __SF_MALLOC_CTRL_H__
 
 ///* If you want to remove assert() functions, uncomment the below line. */
-#define NDEBUG
+//#define NDEBUG
 
 //#define MALLOC_DEBUG
 //#define MALLOC_DEBUG_DETAIL
@@ -53,9 +53,14 @@
 //#define MALLOC_NEED_INIT
 //#define MALLOC_NEED_THREAD_INIT
 //#define MALLOC_USE_STATIC_LINKING
+
 #define MALLOC_USE_PAGEMAP_CACHE
+#define MALLOC_USE_PAGE_COLORING
 #define MALLOC_USE_PAGE_BLOCK_CACHE
+
 /* Minor Experiments */
+
+
 /* MALLOC_DEBUG_DETAIL needs MALLOC_DEBUG */
 #ifdef MALLOC_DEBUG_DETAIL
 #ifndef MALLOC_DEBUG
