@@ -1,8 +1,28 @@
-#include "include/lol_util.h"
-#include <stdbool.h>
+#ifndef __USE_GNU
+#define __USE_GNU 
+#endif
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <time.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <sched.h>
+#include <errno.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "include/lol_util.h"
+#define LT(n) n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n
+static const char log_table[256] = {
+  -1, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+  LT(4), LT(5), LT(5), LT(6), LT(6), LT(6), LT(6),
+  LT(7), LT(7), LT(7), LT(7), LT(7), LT(7), LT(7), LT(7)
+};
+#undef LT
 static inline uint64_t xorshift128plus(xorshift128_state_t* state) { 
 	uint64_t s1 = state->s[ 0 ];
 	const uint64_t s0 = state->s[ 1 ];
@@ -46,3 +66,30 @@ uint32_t threadrand_minstd(){
   state = (tmp >0x7FFFFFFF)?(tmp&0x7FFFFFFF)+(tmp>>31):tmp;
   return (uint32_t)state;
 };
+
+// base-2 logarithm of 32-bit integers
+int Log2(size_t v) {
+  unsigned int t, tt, r;  // temp vars
+  if ((tt = (v >> 16))) {
+    r =  (t = (tt >> 8)) ? 24 + log_table[t] : 16 + log_table[tt];
+  } else {
+    r =  (t = (v >> 8)) ? 8 + log_table[t] : log_table[v];
+  }
+  return r;
+}
+
+
+int32_t CpusOnline() {
+  static __attribute__((aligned(64))) int32_t cpus_online = -1;
+  if (cpus_online == -1) {
+    cpus_online = (int32_t)sysconf(_SC_NPROCESSORS_ONLN);
+    if ((cpus_online == - 1) ||  /* sysconf failed */
+        (cpus_online == 0)) {    /* this should not happen */
+      HANDLE_ERROR("CpusOnline failed\n");
+    }
+  }
+  return cpus_online;
+}
+#ifdef __cplusplus
+};
+#endif

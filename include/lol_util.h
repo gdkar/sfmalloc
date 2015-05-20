@@ -88,6 +88,8 @@ typedef struct {
 uint64_t threadrand_128();
 uint64_t threadrand_1024();
 uint32_t threadrand_minstd();
+int32_t CpusOnline();
+int Log2(size_t);
 #ifdef __cplusplus
 };
 #endif

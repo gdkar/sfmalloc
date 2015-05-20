@@ -82,5 +82,66 @@ static inline int btc(void *base, int bit){
     : "cc", "memory");
   return ret;
 }
-
+static inline void atomic_inc(int64_t *addr){
+  asm volatile(
+      "lock; incq (%0);\n\t"
+     :
+     : "q"(addr)
+     : "cc", "memory"); 
+}
+static inline void atomic_dec(int64_t *addr){
+  asm volatile(
+      "lock; decq (%0);\n\t"
+     :
+     : "q"(addr)
+     : "cc", "memory"); 
+}
+static inline void atomic_add(int64_t *addr,int64_t val){
+  asm volatile(
+      "lock; addq %1, (%0);\n\t"
+     :
+     : "q"(addr)
+     , "q"(val)
+     : "cc", "memory"); 
+}
+static inline void atomic_sub(int64_t *addr,int64_t val){
+  asm volatile(
+      "lock; subq %1, (%0);\n\t"
+     :
+     : "q"(addr)
+     , "q"(val)
+     : "cc", "memory"); 
+}
+static inline void atomic_and(int64_t *addr,int64_t val){
+  asm volatile(
+      "lock; andq %1, (%0);\n\t"
+     :
+     : "q"(addr)
+     , "q"(val)
+     : "cc", "memory"); 
+}
+static inline void atomic_or(int64_t *addr,int64_t val){
+  asm volatile(
+      "lock; orq %1, (%0);\n\t"
+     :
+     : "q"(addr)
+     , "q"(val)
+     : "cc", "memory"); 
+}
+static inline void atomic_xor(int64_t *addr,int64_t val){
+  asm volatile(
+      "lock; xorq %1, (%0);\n\t"
+     :
+     : "q"(addr)
+     , "q"(val)
+     : "cc", "memory"); 
+}
+static inline int64_t atomic_xchg(int64_t *addr, int64_t with){
+  asm volatile(
+      "xchgq %0, (%1);\n\t"
+    : "+q"(with)
+    :  "q"(addr)
+    : "cc", "memory");
+  return with;
+}
 #endif
