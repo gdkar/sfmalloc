@@ -57,7 +57,7 @@
 #include <errno.h>
 #include <pthread.h>
 
-#include "lol_config.h"
+#include "include/lol_config.h"
 #include "include/lol_def.h"
 #include "include/lol_stat.h"
 #include "include/lol_hazard.h"
