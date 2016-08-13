@@ -42,20 +42,22 @@
 #define __SF_MALLOC_STAT_H__
 
 #ifdef MALLOC_STATS
+#include <stdint.h>
+#include <stdio.h>
+#include <stddef.h>
+#include <stdarg.h>
+#include <x86intrin.h>
+
+static inline uint64_t get_timestamp()
+{
+    uint32_t auxv;
+    return __rdtscp(&auxv);
+}
 static double CPU_CLOCK = 1.0;
 
 //-------------------------------------------------------------------
 // Statistics
 //-------------------------------------------------------------------
-static __inline__ uint64_t get_timestamp() {                                  
-  unsigned hi, lo;
-  __asm__ __volatile__ (                                                      
-      "rdtsc"
-      : "=a" (lo), "=d" (hi)                                                  
-      ); 
-  return ((uint64_t)lo | ((uint64_t)hi << 32));                               
-} 
-
 typedef struct {
   uint64_t cnt_mmap;
   uint64_t cnt_munmap;

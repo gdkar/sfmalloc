@@ -43,141 +43,24 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 
-
-static inline int atomic_xchg_int(volatile int *addr, int val) {
-  __asm__ __volatile__ (
-      "lock; xchgl %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      : "memory"
-      );
-  return val;
-}
-
-static inline unsigned atomic_xchg_uint(volatile unsigned *addr, 
-                                        unsigned val) {
-  __asm__ __volatile__ (
-      "lock; xchgl %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      : "memory"
-      );
-  return val;
-}
-
-/*
-   This function atomically increment the value of *addr and returns the 
-   value of *addr before the increment.
- */
-static inline int atomic_inc_int(volatile int *addr) {
-  int val = 1;
-  __asm__ __volatile__ (
-      "lock; xaddl %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      : "memory"
-      );
-  return val;
-}
-
-static inline unsigned atomic_inc_uint(volatile unsigned *addr) {
-  unsigned val = 1;
-  __asm__ __volatile__ (
-      "lock; xaddl %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      : "memory"
-      );
-  return val;
-}
-
-static inline int atomic_dec_int(volatile int *addr) {
-  int val = -1;
-  __asm__ __volatile__ (
-      "lock; xaddl %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      : "memory"
-      );
-  return val;
-}
-
-static inline int atomic_add_int(volatile int *addr, int val) {
-  __asm__ __volatile__ (
-      "lock; xaddl %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      );
-  return val;
-}
-
-static inline unsigned atomic_add_uint(volatile unsigned *addr,
-                                       unsigned val) {
-  __asm__ __volatile__ (
-      "lock; xaddl %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      );
-  return val;
-}
-
-static inline int64_t atomic_add_int64(volatile int64_t *addr,
-                                       int64_t val) {
-  __asm__ __volatile__ (
-      "lock; xaddq %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      );
-  return val;
-}
-
-static inline uint64_t atomic_add_uint64(volatile uint64_t *addr,
-                                         uint64_t val) {
-  __asm__ __volatile__ (
-      "lock; xaddq %0, %1"
-      : "=r" (val)
-      : "m" (*addr), "0" (val)
-      );
-  return val;
-}
-
-
-static inline bool CAS32(volatile unsigned *addr, unsigned old_val,
-                                                  unsigned new_val) {
-	unsigned prev = 0;
-
-  __asm__ __volatile__ (
-      "lock; cmpxchgl %1, %2"
-      : "=a" (prev)
-      : "r" (new_val), "m" (*addr), "0" (old_val)
-      : "memory");
-
-	return prev == old_val;
-}
-
-static inline bool CAS64(volatile uint64_t *addr, uint64_t old_val,
-                                                  uint64_t new_val) {
-#if 0
-  return __sync_bool_compare_and_swap(addr, old_val, new_val);
-#else
-	uint64_t prev = 0;
-
-  __asm__ __volatile__ (
-      "lock; cmpxchgq %1, %2"
-      : "=a" (prev)
-      : "r" (new_val), "m" (*addr), "0" (old_val)
-      : "memory");
-
-	return prev == old_val;
-#endif
-}
-
-static inline bool CAS_ptr(volatile void *addr, void *old_ptr, 
-                                                void *new_ptr) {
-	return CAS64((volatile uint64_t *)addr, (uint64_t)old_ptr,
-                                          (uint64_t)new_ptr); 
-}
+#define atomic_xchg_int(addr, val) atomic_exchange(addr,val)
+#define atomic_xchg_uint(addr, val) atomic_exchange(addr,val)
+#define atomic_xchg_ptr(addr, val) atomic_exchange(addr,val)
+#define atomic_xchg(addr, val) atomic_exchange(addr,val)
+#define atomic_inc_int(addr) atomic_fetch_add(addr,1)
+#define atomic_inc_uint(addr) atomic_fetch_add(addr,1)
+#define atomic_inc_ptr(addr) atomic_fetch_add(addr,1)
+#define atomic_inc(addr) atomic_fetch_add(addr,1)
+#define atomic_dec_int(addr) atomic_fetch_add(addr,-1)
+#define atomic_dec_uint(addr) atomic_fetch_add(addr,-1)
+#define atomic_dec_int64(addr) atomic_fetch_add(addr,-1)
+#define atomic_dec_uint64(addr) atomic_fetch_add(addr,-1)
+#define atomic_dec(addr) atomic_fetch_add(addr,-1)
+#define CAS32(addr, expected, desired) atomic_compare_exchange_strong(addr,expected,desired)
+#define CAS64(addr, expected, desired) atomic_compare_exchange_strong(addr,expected,desired)
+#define CAS_ptr(addr, expected, desired) atomic_compare_exchange_strong(addr,expected,desired)
 
 #endif //__SF_MALLOC_ATOMIC_H__
 

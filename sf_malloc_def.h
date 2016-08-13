@@ -160,7 +160,7 @@ typedef struct sph {
   struct sph* next;            // next pointer in linked list
   struct sph* prev;            // prev pointer in linked list
   size_t      start_page;      // starting page number
-  volatile ownermark_t omark;  // owner_id + finish_mark
+  _Atomic(ownermark_t) omark;  // owner_id + finish_mark
   void*       remote_pb_list;  // remote list for large blocks 
   uint32_t    hazard_mark;
 } sph_t;
@@ -173,7 +173,7 @@ typedef struct hazard_ptr hazard_ptr_t;
 struct hazard_ptr {
   hazard_ptr_t*     next;
   sph_t*            node;
-  volatile uint32_t active;
+  _Atomic(uint32_t)active;
   char pad[CACHE_LINE_SIZE-(sizeof(void*)*2 + sizeof(uint32_t))];
 };
 
@@ -208,7 +208,7 @@ struct pbh {
   void*    free_list;     // pointer to the first free block
   void*    unallocated;   // pointer to the first unused free block
 
-  volatile remote_list_t  remote_list;   // for remote free
+  _Atomic(remote_list_t)  remote_list;   // for remote free
 };
 
 enum {

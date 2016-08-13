@@ -41,10 +41,15 @@
 #ifndef __SF_MALLOC_INTERNAL_H__
 #define __SF_MALLOC_INTERNAL_H__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 void sf_malloc_init();
 void sf_malloc_exit();
 void sf_malloc_thread_init();
 void sf_malloc_thread_exit();
-
+#ifdef __cplusplus
+}
+#endif
 #endif //__SF_MALLOC_INTERNAL_H__
 

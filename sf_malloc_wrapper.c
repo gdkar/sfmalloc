@@ -48,69 +48,52 @@
 
 #include "sf_malloc_internal.h"
 
-
 typedef int (*pthread_create_fpt)(pthread_t *, const pthread_attr_t *, void *(*)(void*), void *);
 typedef void (*pthread_exit_fpt)(void *);
 typedef void *(*start_fpt)(void *);
 
 typedef struct {
-  start_fpt start_fun;
-  void *arg;
+    start_fpt start_fun;
+    void *arg;
 } wrapper_arg_t; 
-
 
 /* function pointers */
 static pthread_create_fpt thread_create = NULL;
-
-
 /* Take a handle of "pthread_create" */
 static void dlsym_pthread_create() {
-  char *error;
+  char *error = NULL;
   dlerror();  // Clear any existing error
-
   thread_create = (pthread_create_fpt)dlsym(RTLD_NEXT, "pthread_create");
   if ((error = dlerror()) != NULL) {
     fprintf(stderr, "%s\n", error);
     exit(EXIT_FAILURE);
   }
 }
-
-
 /* Wrapper function for start_routine of pthread_create() */
-static void *wrapper(void *warg) {
+static void *wrapper(void *warg)
+{
   // Initialize malloc library for this thread
   sf_malloc_thread_init();
-
   // Get the routine and argument for the pthread_create
   start_fpt start_routine = ((wrapper_arg_t *)warg)->start_fun;
   void *arg = ((wrapper_arg_t *)warg)->arg;
-
   free(warg);
-
-  void *result = start_routine(arg);
-
-  return result;
+  return start_routine(arg);
 }
-
-
 /* Wrapper pthread_create() to call the wrapper function of start_routine */
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                    void *(*start_routine)(void *), void *arg) {
-  if (thread_create == NULL) {
+  if (!thread_create) {
     dlsym_pthread_create();
   }
-
   wrapper_arg_t *warg = (wrapper_arg_t *)malloc(sizeof(wrapper_arg_t));
-  if (warg == NULL) {
-    fprintf(stderr, "malloc for wrapper_arg_t failed\n");
-    exit(EXIT_FAILURE);
+  if (!warg) {
+        fprintf(stderr, "malloc for wrapper_arg_t failed\n");
+        exit(EXIT_FAILURE);
   }
-
   // Call the real pthread_create()
   warg->start_fun = start_routine;
   warg->arg = arg;
-  int result = thread_create(thread, attr, wrapper, warg);
-
-  return result;
+  return thread_create(thread, attr, wrapper, warg);
 }
 

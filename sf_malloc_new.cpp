@@ -39,6 +39,10 @@
 /*****************************************************************************/
 
 #include <new>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstddef>
 
 extern "C" {
   void *malloc(size_t);
