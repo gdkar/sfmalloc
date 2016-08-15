@@ -816,7 +816,7 @@ static void finish_superpages(tlh_t* tlh)
   dead_mark.finish_mark = NONE;
 
   do {
-    live_mark = (ownermark_t){atomic_load(&(*sp_list)->omark).owner_id,NONE};
+    live_mark = (ownermark_t){{ atomic_load(&(*sp_list)->omark).owner_id,NONE}};
     sph_t* sph = sph_list_pop(sp_list);
     while (true) {
       sph->omark = (ownermark_t){ .owner_id = atomic_load(&sph->omark).owner_id,.finish_mark = NONE};
