@@ -1,8 +1,8 @@
 
-CC      = gcc
-CXX     = g++
-AR      = ar
-RANLIB  = ranlib
+CC     ?= gcc
+CXX    ?= g++
+AR     ?= ar
+RANLIB ?= ranlib
 
 OBJS = .objs/sf_malloc.o .objs/sf_malloc_new.o .objs/sf_malloc_wrapper.o .objs/sf_malloc_init.o
 STATIC_OBJS = $(patsubst %.o,%-static.o, $(OBJS))
@@ -27,38 +27,48 @@ DEFS += -D_REENTRANT
 		-DMALLOC_NEED_INIT -DMALLOC_NEED_THREAD_INIT
 %-shared.o: DEFS += -DMALLOC_NEED_THREAD_INIT -DMALLOC_NEED_INIT -UMALLOC_USE_STATIC_LINKING
 
-CFLAGS   = -std=gnu11 $(OPT_FLAGS) $(INC_FLAGS) $(DEFS)
-CXXFLAGS = -std=gnu++14 $(OPT_FLAGS) $(INC_FLAGS) $(DEFS)
+CFLAGS= -std=gnu11
+CFLAGS+=-std=gnu11 $(OPT_FLAGS) $(INC_FLAGS) $(DEFS)
+CXXFLAGS= -std=gnu++14
+CXXFLAGS+=-std=gnu++14 $(OPT_FLAGS) $(INC_FLAGS) $(DEFS)
 
 all: $(LIB_MALLOC)
-.objsl/%-debug.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
+show-config:
+	@echo CC=$(CC)
+	@echo CFLAGS=$(CFLAGS)
+	@echo CXX=$(CXX)
+	@echo CXXFLAGS=$(CXXFLAGS)
+.objs/%-debug.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGSS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
+	$(CXX) $(CXXFLAGS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
 .objs/%-shared.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGSS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
+	$(CXX) $(CXXFLAGS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
 .objs/%-static.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGSS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
+	$(CXX) $(CXXFLAGS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
 
 .objs/%-debug.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGSS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
+	$(CC) $(CFLAGS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
 .objs/%-shared.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGSS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
+	$(CC) $(CFLAGS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
 .objs/%-static.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGSS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
+	$(CC) $(CFLAGS) -DPIC -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
 
 .libs/libsfmalloc-static.a: $(STATIC_OBJS)
+	@mkdir -p $(dir $@)
 	$(AR) cr $@ $<
 	$(RANLIB) $@
 
 .libs/libsfmalloc-shared.so: $(SHARED_OBJS)
+	@mkdir -p $(dir $@)
 	$(CXX) -shared -fPIC $(LIBS) -o $@ $<
 
 .libs/libsfmalloc-debug.so: $(DEBUG_OBJS)
+	@mkdir -p $(dir $@)
 	$(CXX) -shared -fPIC $(LIBS) -o $@ $<
 
 distclean:
