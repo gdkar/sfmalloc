@@ -2438,7 +2438,8 @@ static void debug_init() {
   g_DOUT = stdout;
 }
 
-static inline void print_class_array() {
+static inline void print_class_array()
+{
   fprintf(g_DOUT, "========== SizeMap.class_array ==========\n");
   for (int i = 0; i < CLASS_ARRAY_SIZE; ++i) {
     fprintf(g_DOUT, "%3d: %u\n", i, g_sizemap.class_array[i]);
