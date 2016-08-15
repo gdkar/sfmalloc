@@ -83,7 +83,7 @@ static _Atomic(uint32_t) g_hazard_ptr_free_num = 0;
 // Free Superpage List
 static sph_t*            g_free_sp_list = NULL;
 static _Atomic(uint32_t) g_free_sp_len = 0;
-#define FREE_SP_LIST_THRESHOLD    (g_thread_num * 2)
+#define FREE_SP_LIST_THRESHOLD    (g_thread_num * 4)
 
 
 ////////////////////////////////////////////////////////////////////////////
@@ -91,11 +91,11 @@ static _Atomic(uint32_t) g_free_sp_len = 0;
 ////////////////////////////////////////////////////////////////////////////
 #ifdef MALLOC_USE_PAGEMAP_CACHE
 // Page Map Cache
-static __thread size_t          l_pagemap_tag  TLS_MODEL = 0xFFFFFFFFFFFFFFFF;
-static __thread pagemap_leaf_t* l_pagemap_leaf TLS_MODEL = NULL;
+static _Thread_local size_t          l_pagemap_tag  TLS_MODEL = 0xFFFFFFFFFFFFFFFF;
+static _Thread_local pagemap_leaf_t* l_pagemap_leaf TLS_MODEL = NULL;
 #endif
 // Thread Local Heap (TLH)
-static __thread tlh_t l_tlh TLS_MODEL;
+static _Thread_local tlh_t l_tlh TLS_MODEL;
 
 
 ////////////////////////////////////////////////////////////////////////////
@@ -155,7 +155,7 @@ static inline void   pbh_free(pbh_t* pbh);
 static inline void   pbh_add_blocks(tlh_t* tlh, pbh_t* pbh,
                                     void* start_blk, void* end_blk,
                                     uint32_t N);
-static void          pbh_add_unused(tlh_t* tlh, pbh_t* pbh, 
+static void          pbh_add_unused(tlh_t* tlh, pbh_t* pbh,
                                     void* unused, uint32_t N);
 static inline sph_t* pbh_get_superpage(pbh_t* pbh);
 static inline void   pbh_link_init(pbh_t* pbh);
@@ -294,7 +294,8 @@ void sf_malloc_exit() {
 /* Finalize thread-private data structures. */
 void sf_malloc_thread_exit() {
   tlh_t* tlh = &l_tlh;
-  if (tlh->thread_id == DEAD_OWNER) return;
+  if (tlh->thread_id == DEAD_OWNER)
+    return;
 
   // Clear thread-local heap.
   tlh_clear(&l_tlh);
@@ -366,70 +367,70 @@ static inline void do_madvise(void* addr, size_t size) {
 /* Initialize the mapping arrays */
 static void sizemap_init() {
   const uint8_t class_array[CLASS_ARRAY_SIZE] = {
-    0,  0,  1,  2,  2,  3,  3,  4,  4,  5, 
-    5,  6,  6,  7,  7,  8,  8,  9,  9, 10, 
-    10, 11, 11, 12, 12, 13, 13, 14, 14, 15, 
-    15, 16, 16, 17, 17, 17, 17, 18, 18, 18, 
-    18, 19, 19, 19, 19, 20, 20, 20, 20, 21, 
-    21, 21, 21, 21, 21, 21, 21, 22, 22, 22, 
-    22, 22, 22, 22, 22, 23, 23, 23, 23, 23, 
-    23, 23, 23, 24, 24, 24, 24, 24, 24, 24, 
-    24, 25, 25, 25, 25, 25, 25, 25, 25, 26, 
-    26, 26, 26, 26, 26, 26, 26, 27, 27, 27, 
-    27, 27, 27, 27, 27, 28, 28, 28, 28, 28, 
-    28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 
-    28, 28, 28, 28, 28, 28, 28, 28, 28, 29, 
-    30, 31, 32, 33, 34, 34, 34, 35, 35, 36, 
-    36, 37, 37, 37, 37, 38, 38, 39, 39, 39, 
-    39, 39, 39, 40, 40, 41, 41, 42, 42, 42, 
-    42, 43, 43, 43, 43, 43, 43, 43, 43, 44, 
-    44, 44, 44, 45, 45, 46, 46, 46, 46, 46, 
-    46, 46, 46, 46, 46, 47, 47, 47, 47, 48, 
-    48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 
-    48, 49, 49, 50, 50, 50, 50, 50, 50, 50, 
-    50, 50, 50, 50, 50, 50, 50, 51, 51, 51, 
-    51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 
-    51, 52, 52, 52, 52, 52, 52, 52, 52, 52, 
-    52, 52, 52, 52, 52, 52, 52, 52, 52, 53, 
-    53, 53, 53, 53, 53, 53, 53, 53, 53, 54, 
-    54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 
-    54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 
-    54, 55, 55, 55, 55, 55, 55, 56, 56, 56, 
-    56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 
-    56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 
-    56, 56, 56, 57, 57, 58, 58, 58, 58, 58, 
-    58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 
-    58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 
-    58, 58, 58, 58, 58, 59, 59, 59, 59, 59, 
-    59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 
-    59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 
+    0,  0,  1,  2,  2,  3,  3,  4,  4,  5,
+    5,  6,  6,  7,  7,  8,  8,  9,  9, 10,
+    10, 11, 11, 12, 12, 13, 13, 14, 14, 15,
+    15, 16, 16, 17, 17, 17, 17, 18, 18, 18,
+    18, 19, 19, 19, 19, 20, 20, 20, 20, 21,
+    21, 21, 21, 21, 21, 21, 21, 22, 22, 22,
+    22, 22, 22, 22, 22, 23, 23, 23, 23, 23,
+    23, 23, 23, 24, 24, 24, 24, 24, 24, 24,
+    24, 25, 25, 25, 25, 25, 25, 25, 25, 26,
+    26, 26, 26, 26, 26, 26, 26, 27, 27, 27,
+    27, 27, 27, 27, 27, 28, 28, 28, 28, 28,
+    28, 28, 28, 28, 28, 28, 28, 28, 28, 28,
+    28, 28, 28, 28, 28, 28, 28, 28, 28, 29,
+    30, 31, 32, 33, 34, 34, 34, 35, 35, 36,
+    36, 37, 37, 37, 37, 38, 38, 39, 39, 39,
+    39, 39, 39, 40, 40, 41, 41, 42, 42, 42,
+    42, 43, 43, 43, 43, 43, 43, 43, 43, 44,
+    44, 44, 44, 45, 45, 46, 46, 46, 46, 46,
+    46, 46, 46, 46, 46, 47, 47, 47, 47, 48,
+    48, 48, 48, 48, 48, 48, 48, 48, 48, 48,
+    48, 49, 49, 50, 50, 50, 50, 50, 50, 50,
+    50, 50, 50, 50, 50, 50, 50, 51, 51, 51,
+    51, 51, 51, 51, 51, 51, 51, 51, 51, 51,
+    51, 52, 52, 52, 52, 52, 52, 52, 52, 52,
+    52, 52, 52, 52, 52, 52, 52, 52, 52, 53,
+    53, 53, 53, 53, 53, 53, 53, 53, 53, 54,
+    54, 54, 54, 54, 54, 54, 54, 54, 54, 54,
+    54, 54, 54, 54, 54, 54, 54, 54, 54, 54,
+    54, 55, 55, 55, 55, 55, 55, 56, 56, 56,
+    56, 56, 56, 56, 56, 56, 56, 56, 56, 56,
+    56, 56, 56, 56, 56, 56, 56, 56, 56, 56,
+    56, 56, 56, 57, 57, 58, 58, 58, 58, 58,
+    58, 58, 58, 58, 58, 58, 58, 58, 58, 58,
+    58, 58, 58, 58, 58, 58, 58, 58, 58, 58,
+    58, 58, 58, 58, 58, 59, 59, 59, 59, 59,
+    59, 59, 59, 59, 59, 59, 59, 59, 59, 59,
+    59, 59, 59, 59, 59, 59, 59, 59, 59, 59,
     59, 59, 59, 59, 59, 59, 59
   };
 
   const uint32_t class_to_size[NUM_CLASSES] = {
-        8,    16,    32,    48,    64,    80,    96,   112,   128,   144, 
-      160,   176,   192,   208,   224,   240,   256,   288,   320,   352, 
-      384,   448,   512,   576,   640,   704,   768,   832,  1024,  1152, 
-     1280,  1408,  1536,  1664,  2048,  2304,  2560,  3072,  3328,  4096, 
-     4352,  4608,  5120,  6144,  6656,  6912,  8192,  8704, 10240, 10496, 
+        8,    16,    32,    48,    64,    80,    96,   112,   128,   144,
+      160,   176,   192,   208,   224,   240,   256,   288,   320,   352,
+      384,   448,   512,   576,   640,   704,   768,   832,  1024,  1152,
+     1280,  1408,  1536,  1664,  2048,  2304,  2560,  3072,  3328,  4096,
+     4352,  4608,  5120,  6144,  6656,  6912,  8192,  8704, 10240, 10496,
     12288, 14080, 16384, 17664, 20480, 21248, 24576, 24832, 28672, 32768
   };
 
   const uint16_t class_to_pages[NUM_CLASSES] = {
-    1,  1,  1,  1,  1,  1,  1,  1,  1,  1, 
-    1,  1,  1,  1,  1,  1,  1,  1,  1,  1, 
-    1,  1,  1,  1,  1,  2,  1,  2,  1,  2, 
-    1,  3,  2,  3,  1,  3,  2,  3,  5,  1, 
-    6,  5,  4,  3,  5,  7,  2,  7,  5,  8, 
+    1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+    1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+    1,  1,  1,  1,  1,  2,  1,  2,  1,  2,
+    1,  3,  2,  3,  1,  3,  2,  3,  5,  1,
+    6,  5,  4,  3,  5,  7,  2,  7,  5,  8,
     3,  7,  4,  9,  5, 11,  6, 13,  7,  8
   };
 
   const uint16_t num_blocks_per_pbh[NUM_CLASSES] = {
-    512, 256, 128,  85,  64,  51,  42,  36,  32,  28, 
-     25,  23,  21,  19,  18,  17,  16,  14,  12,  11, 
-     10,   9,   8,   7,   6,  11,   5,   9,   4,   7, 
-      3,   8,   5,   7,   2,   5,   3,   4,   6,   1, 
-      5,   4,   3,   2,   3,   4,   1,   3,   2,   3, 
+    512, 256, 128,  85,  64,  51,  42,  36,  32,  28,
+     25,  23,  21,  19,  18,  17,  16,  14,  12,  11,
+     10,   9,   8,   7,   6,  11,   5,   9,   4,   7,
+      3,   8,   5,   7,   2,   5,   3,   4,   6,   1,
+      5,   4,   3,   2,   3,   4,   1,   3,   2,   3,
       1,   2,   1,   2,   1,   2,   1,   2,   1,   1
   };
 
@@ -573,7 +574,7 @@ static inline void* pagemap_get(size_t page_id) {
     l_pagemap_tag  = tag;
     l_pagemap_leaf = g_pagemap.node[i1]->leaf[i2];
   }
-  return l_pagemap_leaf->val[i3];
+  return l_pagemap_leaf->val[i3] ;
 #else
   const size_t i1 = page_id >> (PMAP_LEAF_BIT + PMAP_INTERIOR_BIT);
   const size_t i2 = (page_id >> PMAP_LEAF_BIT) & (PMAP_INTERIOR_LEN - 1);
@@ -668,7 +669,7 @@ static sph_t* sph_alloc(tlh_t* tlh) {
     pagemap_expand(sph->start_page, SUPERPAGE_LEN);
   }
   // Set the owner of superpage.
-  sph->omark.owner_id = tlh->thread_id;
+  set_ownermark_id(sph->omark,tlh->thread_id);
   // Prepend the new superpage to the superpage list.
   sph_list_prepend(&tlh->sp_list, sph);
   return sph;
@@ -721,7 +722,8 @@ static void sph_get_remote_pbs(sph_t* sph) {
 }
 
 
-static void sph_coalesce_pbs(pbh_t* pbh) {
+static void sph_coalesce_pbs(pbh_t* pbh)
+{
   pbh_t* prev_pbh = (pbh_t*)pagemap_get_checked(pbh->start_page - 1);
   assert(((uintptr_t)prev_pbh & HUGE_MALLOC_MARK) == 0);
 
@@ -768,8 +770,8 @@ static void sph_coalesce_pbs(pbh_t* pbh) {
 
 static bool take_superpage(tlh_t* tlh, sph_t* sph) {
   // Try to change the ownership of superpage.
-  ownermark_t expected = (ownermark_t){ .owner_id = DEAD_OWNER };
-  if (!atomic_compare_exchange_strong(&sph->omark.owner_id, &expected.owner_id, tlh->thread_id)) 
+  ownermark_t expected = (ownermark_t){{ .owner_id = DEAD_OWNER }};
+  if (!atomic_compare_exchange_strong(&sph->omark, &expected,(ownermark_t){{ .owner_id=tlh->thread_id}}))
     return false;
 
   if (sph->remote_pb_list) {
@@ -787,7 +789,7 @@ static bool take_superpage(tlh_t* tlh, sph_t* sph) {
     if (pbh->status == PBH_ON_FREE_LIST) {
       pbh_list_prepend(&tlh->free_pb_list[len-1], pbh);
     } else if (pbh->sizeclass < NUM_CLASSES) {
-      uint32_t count = pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt;
+      uint32_t count = pbh->cnt_free + pbh->cnt_unused + atomic_load(&pbh->remote_list).cnt;
       if (count == get_blocks_for_class(pbh->sizeclass)) {
         // PBH became totally free.
         pbh_field_init(pbh);
@@ -814,12 +816,10 @@ static void finish_superpages(tlh_t* tlh)
   dead_mark.finish_mark = NONE;
 
   do {
-    live_mark.owner_id    = (*sp_list)->omark.owner_id;
-    live_mark.finish_mark = NONE;
+    live_mark = (ownermark_t){atomic_load(&(*sp_list)->omark).owner_id,NONE};
     sph_t* sph = sph_list_pop(sp_list);
-    assert(sph->omark.owner_id == live_mark.owner_id);
     while (true) {
-      sph->omark.finish_mark = NONE;
+      sph->omark = (ownermark_t){ .owner_id = atomic_load(&sph->omark).owner_id,.finish_mark = NONE};
       // Try to clean up the superpage.
       if (try_to_free_superpage(sph)) {
         break;
@@ -851,7 +851,7 @@ static bool try_to_free_superpage(sph_t* sph) {
     total_len += len;
 
     if (pbh->status != PBH_ON_FREE_LIST && pbh->sizeclass < NUM_CLASSES) {
-      uint32_t count = pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt;
+      uint32_t count = pbh->cnt_free + pbh->cnt_unused + atomic_load(&pbh->remote_list).cnt;
       if (count == get_blocks_for_class(pbh->sizeclass)) {
         // PBH became totally free.
         pbh_field_init(pbh);
@@ -874,7 +874,7 @@ static bool try_to_free_superpage(sph_t* sph) {
           } else {
             pbh = pbh + len;
           }
-          
+
           continue;
         } else if (next_pbh && next_pbh->status == PBH_ON_FREE_LIST) {
           uint32_t next_len = next_pbh->length;
@@ -898,22 +898,18 @@ static bool try_to_free_superpage(sph_t* sph) {
     pbh = pbh + len;
   }
   assert(total_len == SUPERPAGE_LEN);
-
   if (cnt_inuse == 0) {
     // Superpage became totall free.
     LOG_D("[T%u] EMPTY: %p\n", TID(), sph);
     sph->hazard_mark = true;
-
     // Link the superpage to g_free_sp_list
     atomic_fetch_add(&g_free_sp_len,1);
     sph_t* global_list = g_free_sp_list;
     do {
       sph->next = global_list;
     } while (!atomic_compare_exchange_strong(&g_free_sp_list, &global_list, sph));
-
     // Update pagemap.
     pagemap_set_range(sph->start_page, SUPERPAGE_LEN, NULL);
-
     return true;
   }
 
@@ -940,13 +936,11 @@ static inline void sph_list_prepend(sph_t** list, sph_t* sph) {
   *list = sph;
 }
 
-
 static inline sph_t* sph_list_pop(sph_t** list) {
   assert(*list != NULL);
 
   sph_t* sph = *list;
   *list = (sph != sph->next) ? sph->next : NULL;
-
   // Remove the superpage from the list.
   sph->prev->next = sph->next;
   sph->next->prev = sph->prev;
@@ -977,13 +971,14 @@ static hazard_ptr_t* hazard_ptr_alloc() {
   // Allocate from the current list.
   if (g_hazard_ptr_free_num > 0) {
     for (hazard_ptr_t* hp = g_hazard_ptr_list; hp != NULL; hp = hp->next) {
-      if (hp->active) continue;
-      if (atomic_xchg_uint(&hp->active, 1)) continue;
+      if (hp->active)
+        continue;
+      if (atomic_exchange(&hp->active, 1))
+        continue;
       atomic_fetch_add(&g_hazard_ptr_free_num,-1);
       return hp;
     }
   }
-
   // Allocate a new page and split it.
   hazard_ptr_t* first_hptr = (hazard_ptr_t*)do_mmap(PAGE_SIZE);
   first_hptr->active = 1;
@@ -998,14 +993,12 @@ static hazard_ptr_t* hazard_ptr_alloc() {
   }
 
   hazard_ptr_t* top = g_hazard_ptr_list;
-  do {
-    last_hptr->next = top;
+  do { last_hptr->next = top;
   } while (!atomic_compare_exchange_strong(&g_hazard_ptr_list, &top, first_hptr));
   atomic_fetch_add(&g_hazard_ptr_free_num, rem_len);
 
   return first_hptr;
 }
-
 
 static void hazard_ptr_free(hazard_ptr_t* hptr)
 {
@@ -1013,10 +1006,10 @@ static void hazard_ptr_free(hazard_ptr_t* hptr)
   atomic_fetch_add(&g_hazard_ptr_free_num,1);
 }
 
-
 static bool scan_hazard_pointers(sph_t* sph) {
-  for (hazard_ptr_t* hp = g_hazard_ptr_list; hp != NULL; hp = hp->next) {
-    if (hp->node == sph) return true;
+  for (hazard_ptr_t* hp = g_hazard_ptr_list; hp ; hp = hp->next) {
+    if (hp->node == sph)
+        return true;
   }
   return false;
 }
@@ -1050,18 +1043,17 @@ static inline void pbh_free(pbh_t* pbh) {
 static inline void pbh_add_blocks(tlh_t* tlh, pbh_t* pbh,
                                  void* start_blk, void* end_blk, uint32_t N) {
   sph_t* sph = pbh_get_superpage(pbh);
-  if (UNLIKELY(sph->omark.owner_id != tlh->thread_id)) {
+  if (UNLIKELY(atomic_load(&sph->omark).owner_id != tlh->thread_id)) {
     // Try to free blocks to the owner.
     if (remote_free(tlh, pbh, start_blk, end_blk, N))
       return;
   }
-
   // Return to the local pbh.
   uint32_t cl = pbh->sizeclass;
   blk_list_t* b_list = &tlh->blk_list[cl];
 
-  uint32_t cnt_ref = get_blocks_for_class(cl) - 
-                     (pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt);
+  uint32_t cnt_ref = get_blocks_for_class(cl) -
+                     (pbh->cnt_free + pbh->cnt_unused + atomic_load(&pbh->remote_list).cnt);
   if (cnt_ref == N) {
     // PBH becomes totally free.
     pbh_list_remove(&b_list->pbh_list, pbh);
@@ -1084,8 +1076,8 @@ static void pbh_add_unused(tlh_t* tlh, pbh_t* pbh, void* unused, uint32_t N) {
   uint32_t cl = pbh->sizeclass;
   blk_list_t* b_list = &tlh->blk_list[cl];
 
-  uint32_t cnt_ref = get_blocks_for_class(cl) - 
-                     (pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt);
+  uint32_t cnt_ref = get_blocks_for_class(cl) -
+                     (pbh->cnt_free + pbh->cnt_unused + atomic_load(&pbh->remote_list).cnt);
   if (cnt_ref == N) {
     // PBH becomes totally free.
     pbh_list_remove(&b_list->pbh_list, pbh);
@@ -1101,7 +1093,7 @@ static void pbh_add_unused(tlh_t* tlh, pbh_t* pbh, void* unused, uint32_t N) {
       pbh->unallocated = unused;
       pbh->cnt_unused  = N;
       return;
-    } 
+    }
 
     // PBH already has a unallocated chunk. This may be due to block coloring.
     // We split the smaller chunk between two unallocated chunks.
@@ -1152,7 +1144,7 @@ static inline void pbh_field_init(pbh_t* pbh) {
   pbh->cnt_unused  = 0;
   pbh->free_list   = NULL;
   pbh->unallocated = NULL;
-  pbh->remote_list.together = 0;
+  atomic_store(&pbh->remote_list,(remote_list_t){.together=0}) ;
 }
 
 
@@ -1324,7 +1316,7 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
   tlh->hazard_ptr->node = sph;
 
   while (1) {
-    if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
+    if (UNLIKELY(atomic_load(&sph->omark).owner_id == DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
         tlh->hazard_ptr->node = NULL;
         pb_free(tlh, pbh);
@@ -1335,12 +1327,12 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
     void* top = sph->remote_pb_list;
     SET_NEXT(pb, top);
     if (atomic_compare_exchange_strong(&sph->remote_pb_list, &top, pb)) {
-      sph->omark.finish_mark = DO_NOT_FINISH;
+      set_ownermark_finish(sph->omark, DO_NOT_FINISH);
       break;
     }
   }
 
-  if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
+  if (UNLIKELY(get_ownermark_id(sph->omark)== DEAD_OWNER)) {
     take_superpage(tlh, sph);
   }
   tlh->hazard_ptr->node = NULL;
@@ -1463,18 +1455,17 @@ static void tlh_clear(tlh_t* tlh) {
 
   for (uint32_t cl = 0; cl < NUM_CLASSES; cl++) {
     blk_list_t* b_list = &tlh->blk_list[cl];
-
-    if (b_list->free_blk_list != NULL) {
+    if (b_list->free_blk_list) {
       assert(b_list->cnt_free > 0);
       tlh_return_list(tlh, cl);
     }
-    
-    if (b_list->ptr_to_unused != NULL) {
+
+    if (b_list->ptr_to_unused) {
       assert(b_list->cnt_unused > 0);
       tlh_return_unused(tlh, cl);
     }
 
-    if (b_list->pbh_list != NULL) {
+    if (b_list->pbh_list) {
       tlh_return_pbhs(tlh, cl);
     }
   }
@@ -1544,7 +1535,7 @@ static void tlh_return_list(tlh_t* tlh, uint32_t cl) {
 
 static void tlh_return_unused(tlh_t* tlh, uint32_t cl) {
   blk_list_t* b_list = &tlh->blk_list[cl];
-  
+
   void* unallocated = b_list->ptr_to_unused;
   size_t page_id = (size_t)unallocated >> PAGE_SHIFT;
   pbh_t* pbh = (pbh_t*)pagemap_get(page_id);
@@ -1564,7 +1555,7 @@ static void tlh_return_pbhs(tlh_t* tlh, uint32_t cl) {
     pbh_t* pbh = pbh_list_pop(&b_list->pbh_list);
 
     // Try again if we can free the pbh.
-    uint32_t count = pbh->cnt_free + pbh->cnt_unused + pbh->remote_list.cnt;
+    uint32_t count = pbh->cnt_free + pbh->cnt_unused + atomic_load(&pbh->remote_list).cnt;
     if (count == blks_per_pbh) {
       pb_free(tlh, pbh);
     }
@@ -1586,7 +1577,7 @@ static inline int get_cache_hit_index(v8qi val)
 {
   return __builtin_ctz(__builtin_ia32_pmovmskb(val));
 }
-static inline void pb_cache_return(tlh_t* tlh, void* pb)
+static void pb_cache_return(tlh_t* tlh, void* pb)
 {
   do {
     size_t page_id = (size_t)pb >> PAGE_SHIFT;
@@ -1594,7 +1585,7 @@ static inline void pb_cache_return(tlh_t* tlh, void* pb)
     void* next_pb = GET_NEXT(pb);
 
     sph_t* sph = pbh_get_superpage(pbh);
-    if (sph->omark.owner_id == tlh->thread_id) {
+    if (get_ownermark_id(sph->omark) == tlh->thread_id) {
       pb_free(tlh, pbh);
     } else {
       pb_remote_free(tlh, pb, pbh);
@@ -1612,7 +1603,7 @@ static inline void pb_cache_return(tlh_t* tlh, void* pb)
 static inline void* bump_alloc(size_t size, blk_list_t* b_list) {
   void* ret = b_list->ptr_to_unused;
 
-  // If size is smaller than the half of cache line size, 
+  // If size is smaller than the half of cache line size,
   // split all blocks in a cache line.
   if (size <= (CACHE_LINE_SIZE / 2)) {
     uint32_t blks_per_line = CACHE_LINE_SIZE / size;
@@ -1686,7 +1677,7 @@ static void* small_malloc(uint32_t cl)
       // PBH has the free list.
       assert(pbh->free_list );
       void* ret = pbh->free_list;
-      
+
       b_list->free_blk_list = GET_NEXT(pbh->free_list);
       b_list->ptr_to_unused = pbh->unallocated;
       b_list->cnt_free   = pbh->cnt_free - 1;
@@ -1697,7 +1688,7 @@ static void* small_malloc(uint32_t cl)
       pbh->free_list   = NULL;
       pbh->unallocated = NULL;
 
-      if (pbh->remote_list.cnt == 0) {
+      if (atomic_load(&pbh->remote_list).cnt == 0) {
         // Move this pbh to the last of pbh_list.
         b_list->pbh_list = pbh->next;
       }
@@ -1713,17 +1704,17 @@ static void* small_malloc(uint32_t cl)
       pbh->unallocated = NULL;
       pbh->cnt_unused  = 0;
 
-      if (pbh->remote_list.cnt == 0) {
+      if (atomic_load(&pbh->remote_list).cnt == 0) {
         // Move this pbh to the last of pbh_list.
         b_list->pbh_list = pbh->next;
       }
 
       return bump_alloc(size, b_list);
-    } else if (pbh->remote_list.cnt > 0) {
+    } else if (atomic_load(&pbh->remote_list).cnt > 0) {
       // If there exists a remote list, get it.
       remote_list_t top = pbh->remote_list;
       do {
-      } while (!atomic_compare_exchange_strong(&pbh->remote_list.together, &top.together, 0));
+      } while (!atomic_compare_exchange_strong(&pbh->remote_list, &top, (remote_list_t){.together=0}));
 
       void* page_addr = (void*)(pbh->start_page << PAGE_SHIFT);
       void* ret = page_addr + size * top.head;
@@ -1751,11 +1742,11 @@ static void* small_malloc(uint32_t cl)
   if (size & (CACHE_LINE_SIZE - 1)) {
     pbh->status = PBH_AGAINST_FALSE_SHARING;
   }
-  pbh->remote_list.together = 0;
+  pbh->remote_list = (remote_list_t){.together=0};
 
   uint32_t blks_per_pbh = get_blocks_for_class(cl);
   void* start_addr = (void*)(pbh->start_page << PAGE_SHIFT);
-  
+
   pbh->unallocated = NULL;
   pbh->cnt_unused  = 0;
 
@@ -1810,7 +1801,7 @@ static inline void* large_malloc(size_t page_len)
   tlh_t* tlh = &l_tlh;
 #ifdef MALLOC_USE_PAGE_BLOCK_CACHE
   pb_cache_t* pb_cache = &tlh->pb_cache;
-  
+
   char in = (char)page_len;
   char8_t v_in = {.v = (v8qi){in, in, in, in, in, in, in, in}};
 
@@ -1892,7 +1883,7 @@ static bool remote_free(tlh_t* tlh, pbh_t* pbh, void* first, void* last, uint32_
   new_top.head = blk_idx;
   tlh->hazard_ptr->node = sph;
   while (true) {
-    if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
+    if (UNLIKELY(get_ownermark_id(sph->omark)== DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
         tlh->hazard_ptr->node = NULL;
         return false;
@@ -1906,12 +1897,12 @@ static bool remote_free(tlh_t* tlh, pbh_t* pbh, void* first, void* last, uint32_
       SET_NEXT(last, head_addr);
     }
     new_top.cnt = top.cnt + N;
-    if (atomic_compare_exchange_strong(&pbh->remote_list.together, &top.together, new_top.together)) {
-      sph->omark.finish_mark = DO_NOT_FINISH;
+    if (atomic_compare_exchange_strong(&pbh->remote_list, &top, new_top)) {
+      set_ownermark_finish(sph->omark, DO_NOT_FINISH);
       break;
     }
   }
-  if (UNLIKELY(sph->omark.owner_id == DEAD_OWNER)) {
+  if (UNLIKELY(get_ownermark_id(sph->omark)== DEAD_OWNER)) {
     take_superpage(tlh, sph);
   }
   tlh->hazard_ptr->node = NULL;
@@ -1923,7 +1914,7 @@ static inline void small_free(void* ptr, pbh_t* pbh)
   tlh_t* tlh = &l_tlh;
   if (pbh->status == PBH_AGAINST_FALSE_SHARING) {
     sph_t* sph = pbh_get_superpage(pbh);
-    if (UNLIKELY(sph->omark.owner_id != tlh->thread_id)) {
+    if (UNLIKELY(get_ownermark_id(sph->omark) != tlh->thread_id)) {
       // Try to free the block to the owner.
       if (remote_free(tlh, pbh, ptr, ptr, 1))
         return;
@@ -1969,7 +1960,7 @@ static inline void large_free(void* ptr, pbh_t* pbh)
       block->length++;
     } else {
       sph_t* sph = pbh_get_superpage(pbh);
-      if (sph->omark.owner_id == tlh->thread_id) {
+      if (get_ownermark_id(sph->omark) == tlh->thread_id) {
         pb_free(tlh, pbh);
       } else {
         pb_remote_free(tlh, ptr, pbh);
@@ -1977,15 +1968,12 @@ static inline void large_free(void* ptr, pbh_t* pbh)
     }
   } else {
     inc_pcache_free_miss();
-
     // Miss
     pos = g_lru_table[pb_cache->state];
-
     // Evict the victim.
     pb_cache_block_t* block = &pb_cache->block[pos];
     if (block->data) {
       inc_pcache_free_evict();
-
       pb_cache_return(tlh, block->data);
     }
 
@@ -2022,8 +2010,8 @@ static inline void huge_free(void* ptr, size_t size) {
 // Library Functions
 ////////////////////////////////////////////////////////////////////////////
 /*
-   malloc() allocates size bytes and returns a pointer to the allocated 
-   memory.  The memory is not cleared. 
+   malloc() allocates size bytes and returns a pointer to the allocated
+   memory.  The memory is not cleared.
 
    PARAMETER
    - size: bytes to allocate
@@ -2043,7 +2031,7 @@ void *malloc(size_t size) {
   if (UNLIKELY(!g_initialized)) sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
 #else
-  // malloc() should be called after library initialization through 
+  // malloc() should be called after library initialization through
   // sf_malloc_init() call.
   assert(g_initialized != 0);
 #endif
@@ -2068,9 +2056,9 @@ void *malloc(size_t size) {
 
 
 /*
-   free() frees the memory space pointed to by ptr, which must have been 
-   returned by a previous call to malloc(), calloc() or realloc(). 
-   Otherwise, or if free(ptr) has already been called before, undefined 
+   free() frees the memory space pointed to by ptr, which must have been
+   returned by a previous call to malloc(), calloc() or realloc().
+   Otherwise, or if free(ptr) has already been called before, undefined
    behavior occurs.
 
    PARAMETER
@@ -2110,7 +2098,7 @@ void free(void *ptr) {
 
 
 /*
-   calloc() allocates memory for an array of nmemb elements of size bytes 
+   calloc() allocates memory for an array of nmemb elements of size bytes
    each and returns a pointer to the allocated memory.
    The memory is set to zero.
 
@@ -2122,7 +2110,7 @@ void free(void *ptr) {
    - Return a pointer to the allocated memory, which is suitably aligned for
      any kind of variable.
    - On error, return NULL.
-   - NULL may also be returned by a successful call to calloc() with nmemb 
+   - NULL may also be returned by a successful call to calloc() with nmemb
      or size equal to zero.
  */
 void *calloc(size_t nmemb, size_t size) {
@@ -2140,9 +2128,9 @@ void *calloc(size_t nmemb, size_t size) {
 }
 
 
-/* 
+/*
    realloc() changes the size of the memory block pointed to by ptr to size
-   bytes.  The contents will be unchanged to the minimum of the old and new 
+   bytes.  The contents will be unchanged to the minimum of the old and new
    sizes; newly allocated memory will be uninitialized.
 
    PARAMETER
@@ -2150,24 +2138,24 @@ void *calloc(size_t nmemb, size_t size) {
    - size: new size
 
    RETURN VALUE
-   - Return a pointer to the newly allocated memory, which is suitably 
-     aligned for any kind of variable and may be different from ptr, 
+   - Return a pointer to the newly allocated memory, which is suitably
+     aligned for any kind of variable and may be different from ptr,
      or NULL if the request fails.
-   - If size was equal to 0, either NULL or a pointer suitable to be passed 
+   - If size was equal to 0, either NULL or a pointer suitable to be passed
      to free() is returned.
-   - If realloc() fails the original block is left untouched; 
-     it is not freed or moved. 
+   - If realloc() fails the original block is left untouched;
+     it is not freed or moved.
  */
 void *realloc(void *ptr, size_t size) {
-  // If ptr is NULL, then the call is equivalent to malloc(size), for all 
+  // If ptr is NULL, then the call is equivalent to malloc(size), for all
   // values of size.
   if (ptr == NULL) {
     return malloc(size);
   }
 
-  // If size is equal to zero, and ptr is not NULL, then the call is 
+  // If size is equal to zero, and ptr is not NULL, then the call is
   // equivalent to free(ptr).  Unless ptr is NULL, it must have been returned
-  // by an earlier call to malloc(), calloc() or realloc(). 
+  // by an earlier call to malloc(), calloc() or realloc().
   // If the area pointed to was moved, a free(ptr) is done.
   if (size == 0) {
     free(ptr);
@@ -2212,7 +2200,7 @@ void *realloc(void *ptr, size_t size) {
 /*
    The function posix_memalign() allocates size bytes and places the address
    of the allocated memory in *memptr.  The address of the allocated memory
-   will be a multiple of alignment, which must be a power of two and a 
+   will be a multiple of alignment, which must be a power of two and a
    multiple of sizeof(void *).  If size is 0, then posix_memalign() returns
    either NULL, or a unique pointer value that can later be successfully
    passed to free().
@@ -2224,11 +2212,11 @@ void *realloc(void *ptr, size_t size) {
 
    RETURN VALUE
    - Return zero on success, or one of the error values listed in ERRORS
-   
+
    ERRORS
-   - EINVAL: The alignment argument was not a power of two, or was not a 
+   - EINVAL: The alignment argument was not a power of two, or was not a
              multiple of sizeof(void *).
-   - ENOMEM: There was insufficient memory to fulfill the allocation request. 
+   - ENOMEM: There was insufficient memory to fulfill the allocation request.
  */
 int posix_memalign(void **memptr, size_t alignment, size_t size) {
   inc_cnt_memalign();
@@ -2336,7 +2324,7 @@ void *valloc(size_t size) {
 
 /*
    memalign() allocates size bytes and returns a pointer to the allocated
-   memory.  The memory address will be a multiple of boundary, which must 
+   memory.  The memory address will be a multiple of boundary, which must
    be a power of two.
 
    PARAMETER
@@ -2540,12 +2528,12 @@ void print_pbh(pbh_t* pbh) {
       pbh->cnt_free, pbh->cnt_unused,
       pbh->page_color, pbh->block_color,
       pbh->free_list, pbh->unallocated,
-      pbh->remote_list.head, pbh->remote_list.cnt
+      atomic_load(&pbh->remote_list).head, atomic_load(&pbh->remote_list).cnt
   );
 }
 
 void print_pbh_list(pbh_t* list) {
-  fprintf(g_DOUT, "========== PBH List ==========\n"); 
+  fprintf(g_DOUT, "========== PBH List ==========\n");
   if (list == NULL) {
     fprintf(g_DOUT, "No list\n");
     return;
@@ -2620,7 +2608,7 @@ void print_superpage(sph_t* spage) {
 }
 
 void print_superpage_list(sph_t* list) {
-  fprintf(g_DOUT, "========== SuperPage List ==========\n"); 
+  fprintf(g_DOUT, "========== SuperPage List ==========\n");
   if (list == NULL) {
     fprintf(g_DOUT, "No list\n");
     return;
@@ -2652,7 +2640,7 @@ void print_superpage_list(sph_t* list) {
 }
 
 void print_free_pb_list(tlh_t* tlh) {
-  fprintf(g_DOUT, "========== Free Page Block Lists ==========\n"); 
+  fprintf(g_DOUT, "========== Free Page Block Lists ==========\n");
 
   size_t pagelist_cnt = 0;
   for (uint32_t i = 0; i < NUM_PAGE_CLASSES; i++) {
@@ -2701,7 +2689,7 @@ void print_block_list(void* block) {
 
 #ifdef MALLOC_USE_PAGE_BLOCK_CACHE
 void print_pb_cache(pb_cache_t* pb_cache) {
-  fprintf(g_DOUT, "========== Page Block Cache ==========\n"); 
+  fprintf(g_DOUT, "========== Page Block Cache ==========\n");
   for (int w = 0; w < NUM_PB_CACHE_WAY; w++) {
     fprintf(g_DOUT, "%d: ", w);
     pb_cache_block_t* way = &pb_cache->block[w];
@@ -2726,9 +2714,9 @@ void print_pb_cache(pb_cache_t* pb_cache) {
 
 void print_tlh(tlh_t* tlh) {
   fprintf(g_DOUT, "========== Thread Local Heap (T%u) ==========\n",
-      tlh->thread_id); 
+      tlh->thread_id);
 
-  fprintf(g_DOUT, "========== Block Lists ==========\n"); 
+  fprintf(g_DOUT, "========== Block Lists ==========\n");
   for (uint32_t i = 0; i < NUM_CLASSES; i++) {
     blk_list_t* b_list = &tlh->blk_list[i];
     if ((b_list->pbh_list == NULL) &&
@@ -2767,7 +2755,7 @@ void print_tlh(tlh_t* tlh) {
   print_free_pb_list(tlh);
 
   print_pb_cache(&tlh->pb_cache);
-  
+
   print_superpage_list(tlh->sp_list);
 
   fprintf(g_DOUT, "\n");

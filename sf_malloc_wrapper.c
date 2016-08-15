@@ -64,7 +64,7 @@ static void dlsym_pthread_create() {
   char *error = NULL;
   dlerror();  // Clear any existing error
   thread_create = (pthread_create_fpt)dlsym(RTLD_NEXT, "pthread_create");
-  if ((error = dlerror()) != NULL) {
+  if ((error = dlerror())) {
     fprintf(stderr, "%s\n", error);
     exit(EXIT_FAILURE);
   }

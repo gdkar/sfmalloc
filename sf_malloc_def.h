@@ -153,6 +153,11 @@ typedef union {
   uint64_t with;
 } ownermark_t __attribute__ ((aligned(8)));
 
+#define get_ownermark_id(omark) (atomic_load(&omark).owner_id)
+#define get_ownermark_finish(omark) (atomic_load(&omark).finish_mark)
+
+#define set_ownermark_id(omark, id) ((omark) = (ownermark_t){ {.owner_id = (id), .finish_mark=get_ownermark_finish(omark)}})
+#define set_ownermark_finish(omark, finish) ((omark)=(ownermark_t){{ .owner_id = get_ownermark_id(omark), .finish_mark = (finish)}})
 #define NONE            0
 #define DO_NOT_FINISH   1
 
@@ -170,11 +175,11 @@ typedef struct sph {
 // Type for Hazard Pointer
 //-------------------------------------------------------------------
 typedef struct hazard_ptr hazard_ptr_t;
+typedef void (hazard_dtor)(void *);
 struct hazard_ptr {
-  hazard_ptr_t*     next;
-  sph_t*            node;
+  hazard_ptr_t*   next;
+  _Atomic(void*)  node;//[(CACHE_LINE_SIZE - (sizeof(void*)+sizeof(uint32_t)/sizeof(_Atomic(hazard_dtor*)*)];
   _Atomic(uint32_t)active;
-  char pad[CACHE_LINE_SIZE-(sizeof(void*)*2 + sizeof(uint32_t))];
 };
 
 
@@ -320,8 +325,8 @@ typedef struct {
 #define MIN(a,b)  (((a) < (b)) ? (a) : (b))
 #define MAX(a,b)  (((a) > (b)) ? (a) : (b))
 
-#define LIKELY(x)   __builtin_expect(x, 1)
-#define UNLIKELY(x) __builtin_expect(x, 0)
+#define LIKELY(x)   __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #define TID()       l_tlh.thread_id
 
 

@@ -89,7 +89,7 @@ typedef struct {
   uint64_t pcolor_dup;
 } thread_stat_t CACHE_LINE_ALIGN;
 
-static __thread thread_stat_t l_stat TLS_MODEL;
+static _Thread_local thread_stat_t l_stat TLS_MODEL;
 
 
 #define inc_cnt_mmap()                l_stat.cnt_mmap++
