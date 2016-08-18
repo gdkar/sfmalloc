@@ -324,12 +324,13 @@ void sf_malloc_destructor(void* val) {
 #define MMAP_PROT   (PROT_READ | PROT_WRITE)
 #define MMAP_FLAGS  (MAP_PRIVATE | MAP_ANONYMOUS)
 static inline void* do_mmap(size_t size) {
+  mmap_timer_start();
   void* mem = mmap(0, size, MMAP_PROT, MMAP_FLAGS, -1, 0);
   if (mem == MAP_FAILED) {
     perror("do_mmap");
     CRASH("size=%lu\n", size);
   }
-
+  mmap_timer_stop();
   inc_cnt_mmap();
   inc_size_mmap(size);
   update_size_mmap_max();
@@ -339,22 +340,24 @@ static inline void* do_mmap(size_t size) {
 
 
 static inline void do_munmap(void* addr, size_t size) {
+  munmap_timer_start();
   if (munmap(addr, size) == -1) {
     perror("do_munmap");
     CRASH("addr=%p size=%lu\n", addr, size);
   }
-
+  munmap_timer_stop();
   inc_cnt_munmap();
   inc_size_munmap(size);
 }
 
 
 static inline void do_madvise(void* addr, size_t size) {
+  madvise_timer_start();
   if (madvise(addr, size, MADV_DONTNEED) == -1) {
     perror("do_madvise");
     CRASH("addr=%p size=%lu\n", addr, size);
   }
-
+  madvise_timer_stop();
   inc_cnt_madvise();
   inc_size_madvise(size);
 }
@@ -434,8 +437,7 @@ static void sizemap_init() {
       1,   2,   1,   2,   1,   2,   1,   2,   1,   1
   };
 
-  memcpy(g_sizemap.class_array, class_array,
-         sizeof(uint8_t) * CLASS_ARRAY_SIZE);
+  memcpy(g_sizemap.class_array, class_array,sizeof(uint8_t) * CLASS_ARRAY_SIZE);
   for (int i = 0; i < NUM_CLASSES; ++i) {
     g_sizemap.info[i].class_to_size = class_to_size[i];
     g_sizemap.info[i].class_to_pages = class_to_pages[i];
@@ -447,8 +449,10 @@ static void sizemap_init() {
 #endif
 }
 
-static inline uint32_t get_logfloor(uint32_t n) {
-  uint32_t log = 0;
+static inline uint32_t get_logfloor(uint32_t n)
+{
+  return (31 -__builtin_clz(n));
+/*  uint32_t log = 0;
   for (int32_t i = 4; i >= 0; --i) {
     uint32_t shift = 1 << i;
     uint32_t x = n >> shift;
@@ -458,7 +462,7 @@ static inline uint32_t get_logfloor(uint32_t n) {
     }
   }
   assert(n == 1);
-  return log;
+  return log;*/
 }
 
 /* Compute index of the class_array[] entry for a given size */
@@ -512,8 +516,7 @@ static uint32_t get_alignment(uint32_t size) {
 ////////////////////////////////////////////////////////////////////////////
 // PageMap Functions
 ////////////////////////////////////////////////////////////////////////////
-static void pagemap_init() {
-}
+static void pagemap_init() { }
 
 
 static void pagemap_expand(size_t page_id, size_t n) {
@@ -1196,7 +1199,8 @@ static inline void pbh_list_remove(pbh_t** list, pbh_t* pbh) {
     assert(*list == pbh);
     *list = NULL;
   } else {
-    if (*list == pbh) *list = pbh->next;
+    if (*list == pbh)
+        *list = pbh->next;
     pbh->prev->next = pbh->next;
     pbh->next->prev = pbh->prev;
     pbh_link_init(pbh);
@@ -1204,13 +1208,12 @@ static inline void pbh_list_remove(pbh_t** list, pbh_t* pbh) {
 }
 
 
-static inline void pbh_list_move_to_first(pbh_t** list, pbh_t* pbh) {
+static inline void pbh_list_move_to_first(pbh_t** list, pbh_t* pbh)
+{
   assert(pbh != pbh->next);
-
   // First remove the pbh.
   pbh->prev->next = pbh->next;
   pbh->next->prev = pbh->prev;
-
   // Prepend it.
   pbh_t* top = *list;
   pbh->next = top;
@@ -1495,7 +1498,7 @@ static void tlh_return_list(tlh_t* tlh, uint32_t cl) {
   uint32_t cont_num = 1;
 
   // If contiguous blocks are in the same pbh, we will return them together.
-  while (curr_blk != NULL) {
+  while (curr_blk) {
     size_t curr_page_id = (size_t)curr_blk >> PAGE_SHIFT;
 
     // Check curr_blk is in the same pbh with the previous block.
@@ -2026,7 +2029,7 @@ static inline void huge_free(void* ptr, size_t size) {
 void *malloc(size_t size) {
   inc_cnt_malloc();
   malloc_timer_start();
-
+  if(UNLIKELY(!size)) return NULL;
 #ifdef MALLOC_NEED_INIT
   if (UNLIKELY(!g_initialized)) sf_malloc_init();
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
@@ -2070,12 +2073,14 @@ void *malloc(size_t size) {
 void free(void *ptr) {
   inc_cnt_free();
   free_timer_start();
-
+  if (UNLIKELY(ptr == NULL)) {
+    free_timer_stop();
+    return;
+  }
 #ifdef MALLOC_NEED_INIT
   if (UNLIKELY(l_tlh.thread_id == 0)) sf_malloc_thread_init();
 #endif
 
-  if (UNLIKELY(ptr == NULL)) return;
 
   size_t page_id = (size_t)ptr >> PAGE_SHIFT;
   void* val = pagemap_get(page_id);
@@ -2146,6 +2151,28 @@ void *calloc(size_t nmemb, size_t size) {
    - If realloc() fails the original block is left untouched;
      it is not freed or moved.
  */
+size_t malloc_usable_size(void *ptr)
+{
+  inc_cnt_malloc_usable_size();
+  malloc_usable_size_timer_start();
+  size_t old_size = 0;
+  if(LIKELY(ptr)){
+    size_t page_id = (size_t)ptr >> PAGE_SHIFT;
+    void* val = pagemap_get(page_id);
+    if (UNLIKELY((uintptr_t)val & HUGE_MALLOC_MARK)) {
+        old_size = (size_t)val & ~HUGE_MALLOC_MARK;
+    } else {
+        pbh_t* pbh = (pbh_t*)val;
+        if (pbh->sizeclass < NUM_CLASSES) {
+        old_size = get_size_for_class(pbh->sizeclass);
+        } else {
+        old_size =  pbh->length * PAGE_SIZE;
+        }
+    }
+  }
+  malloc_usable_size_timer_stop();
+  return old_size;
+}
 void *realloc(void *ptr, size_t size) {
   // If ptr is NULL, then the call is equivalent to malloc(size), for all
   // values of size.
@@ -2381,28 +2408,31 @@ void print_stats() {
       "free    : cnt(%lu) time(%.9f)\n"
       "realloc : cnt(%lu) time(%.9f)\n"
       "memalign: cnt(%lu) time(%.9f)\n"
+      "malloc_usable_size:\n"
+      "          cnt(%lu) time(%.9f)\n"
       "pcache  : malloc(hit:%lu real_hit:%lu miss:%lu evict:%lu)\n"
       "          free(hit:%lu miss:%lu evict:%lu)\n"
-      "mmap    : cnt(%lu) size(%lu B, %.1f KB, %.1f MB) max(%.1f MB)\n"
-      "munmap  : cnt(%lu) size(%lu B, %.1f KB, %.1f MB)\n"
-      "madvise : cnt(%lu) size(%lu B, %.1f KB, %.1f MB)\n\n",
+      "mmap    : cnt(%lu) time(%.9f) size(%lu B, %.1f KB, %.1f MB) max(%.1f MB)\n"
+      "munmap  : cnt(%lu) time(%.9f) size(%lu B, %.1f KB, %.1f MB)\n"
+      "madvise : cnt(%lu) time(%.9f) size(%lu B, %.1f KB, %.1f MB)\n\n",
       l_tlh.thread_id,
       get_cnt_malloc(), get_time_malloc(),
       get_cnt_free(), get_time_free(),
       get_cnt_realloc(), get_time_realloc(),
       get_cnt_memalign(), get_time_memalign(),
+      get_cnt_malloc_usable_size(), get_time_malloc_usable_size(),
       get_pcache_malloc_hit(), get_pcache_malloc_real_hit(),
       get_pcache_malloc_miss(), get_pcache_malloc_evict(),
       get_pcache_free_hit(), get_pcache_free_miss(), get_pcache_free_evict(),
 
-      get_cnt_mmap(), get_size_mmap(),
+      get_cnt_mmap(), get_time_mmap(),get_size_mmap(),
       getKB(get_size_mmap()), getMB(get_size_mmap()),
       getMB(get_size_mmap_max()),
 
-      get_cnt_munmap(), get_size_munmap(),
+      get_cnt_munmap(), get_time_munmap(), get_size_munmap(),
       getKB(get_size_munmap()), getMB(get_size_munmap()),
 
-      get_cnt_madvise(), get_size_madvise(),
+      get_cnt_madvise(), get_time_madvise(), get_size_madvise(),
       getKB(get_size_madvise()), getMB(get_size_madvise())
       );
 }
@@ -2416,6 +2446,7 @@ void print_stats() {
 void cfree(void *ptr)                               ALIAS("free");
 
 #ifdef __GLIBC__
+size_t __libc_malloc_usable_size(void *ptr)          ALIAS("malloc_usable_size");
 void *__libc_malloc(size_t size)                    ALIAS("malloc");
 void  __libc_free(void *ptr)                        ALIAS("free");
 void *__libc_realloc(void *ptr, size_t size)        ALIAS("realloc");

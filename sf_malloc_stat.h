@@ -67,14 +67,20 @@ typedef struct {
   uint64_t size_madvise;
   uint64_t size_mmap_max;
 
+  uint64_t time_mmap;
+  uint64_t time_munmap;
+  uint64_t time_madvise;
+
   uint64_t cnt_malloc;
   uint64_t cnt_free;
   uint64_t cnt_realloc;
   uint64_t cnt_memalign;
+  uint64_t cnt_malloc_usable_size;
   uint64_t time_malloc;
   uint64_t time_free;
   uint64_t time_realloc;
   uint64_t time_memalign;
+  uint64_t time_malloc_usable_size;
 
   uint64_t pcache_malloc_hit;
   uint64_t pcache_malloc_real_hit;
@@ -105,16 +111,22 @@ static _Thread_local thread_stat_t l_stat TLS_MODEL;
 #define get_cnt_mmap()                l_stat.cnt_mmap
 #define get_cnt_munmap()              l_stat.cnt_munmap
 #define get_cnt_madvise()             l_stat.cnt_madvise
+
 #define get_size_mmap()               l_stat.size_mmap
 #define get_size_munmap()             l_stat.size_munmap
 #define get_size_madvise()            l_stat.size_madvise
 #define get_size_mmap_max()           l_stat.size_mmap_max
 
 #define inc_cnt_malloc()              l_stat.cnt_malloc++
+#define inc_cnt_malloc_usable_size()  l_stat.cnt_malloc_usable_size++
 #define inc_cnt_free()                l_stat.cnt_free++
 #define inc_cnt_realloc()             l_stat.cnt_realloc++
 #define inc_cnt_memalign()            l_stat.cnt_memalign++
+#define inc_time_mmap(t)              l_stat.time_mmap+= (t)
+#define inc_time_munmap(t)            l_stat.time_munmap+= (t)
+#define inc_time_madvise(t)           l_stat.time_madvise+= (t)
 #define inc_time_malloc(t)            l_stat.time_malloc += (t)
+#define inc_time_malloc_usable_size(t)            l_stat.time_malloc_usable_size += (t)
 #define inc_time_free(t)              l_stat.time_free += (t)
 #define inc_time_realloc(t)           l_stat.time_realloc += (t)
 #define inc_time_memalign(t)          l_stat.time_memalign += (t)
@@ -130,9 +142,14 @@ static _Thread_local thread_stat_t l_stat TLS_MODEL;
 #define inc_pcolor_dup()              l_stat.pcolor_dup++
 
 #define get_cnt_malloc()              l_stat.cnt_malloc
+#define get_cnt_malloc_usable_size()              l_stat.cnt_malloc_usable_size
 #define get_cnt_free()                l_stat.cnt_free
 #define get_cnt_realloc()             l_stat.cnt_realloc
 #define get_cnt_memalign()            l_stat.cnt_memalign
+#define get_time_malloc_usable_size()             ((double)l_stat.time_malloc_usable_size/CPU_CLOCK)
+#define get_time_mmap()             ((double)l_stat.time_mmap/CPU_CLOCK)
+#define get_time_munmap()             ((double)l_stat.time_munmap/CPU_CLOCK)
+#define get_time_madvise()             ((double)l_stat.time_madvise/CPU_CLOCK)
 #define get_time_malloc()             ((double)l_stat.time_malloc/CPU_CLOCK)
 #define get_time_free()               ((double)l_stat.time_free/CPU_CLOCK)
 #define get_time_realloc()            ((double)l_stat.time_realloc/CPU_CLOCK)
@@ -147,6 +164,23 @@ static _Thread_local thread_stat_t l_stat TLS_MODEL;
 #define get_pcolor_get()              l_stat.pcolor_get
 #define get_pcolor_new()              l_stat.pcolor_new
 #define get_pcolor_dup()              l_stat.pcolor_dup
+
+#define mmap_timer_start()    uint64_t _start_time = get_timestamp()
+#define mmap_timer_stop()     uint64_t _end_time = get_timestamp(); \
+                                inc_time_mmap(_end_time - _start_time)
+
+#define munmap_timer_start()    uint64_t _start_time = get_timestamp()
+#define munmap_timer_stop()     uint64_t _end_time = get_timestamp(); \
+                                inc_time_munmap(_end_time - _start_time)
+
+#define madvise_timer_start()    uint64_t _start_time = get_timestamp()
+#define madvise_timer_stop()     uint64_t _end_time = get_timestamp(); \
+                                inc_time_madvise(_end_time - _start_time)
+
+#define malloc_usable_size_timer_start()    uint64_t _start_time = get_timestamp()
+#define malloc_usable_size_timer_stop()     uint64_t _end_time = get_timestamp(); \
+                                inc_time_malloc_usable_size(_end_time - _start_time)
+
 
 #define malloc_timer_start()    uint64_t _start_time = get_timestamp()
 #define malloc_timer_stop()     uint64_t _end_time = get_timestamp(); \
@@ -170,6 +204,10 @@ static _Thread_local thread_stat_t l_stat TLS_MODEL;
 #define inc_cnt_mmap()
 #define inc_cnt_munmap()
 #define inc_cnt_madvise()
+#define inc_time_mmap(t)
+#define inc_time_munmap(t)
+#define inc_time_madvise(t)
+
 #define inc_size_mmap(s)
 #define inc_size_munmap(s)
 #define inc_size_madvise(s)
@@ -178,15 +216,21 @@ static _Thread_local thread_stat_t l_stat TLS_MODEL;
 #define get_cnt_mmap()
 #define get_cnt_munmap()
 #define get_cnt_madvise()
+#define get_time_mmap()
+#define get_time_munmap()
+#define get_time_madvise()
+
 #define get_size_mmap()
 #define get_size_munmap()
 #define get_size_madvise()
 #define get_size_mmap_max()
 
+#define inc_cnt_malloc_usable_size()
 #define inc_cnt_malloc()
 #define inc_cnt_free()
 #define inc_cnt_realloc()
 #define inc_cnt_memalign()
+#define inc_time_malloc_usable_size(t)
 #define inc_time_malloc(t)
 #define inc_time_free(t)
 #define inc_time_realloc(t)
@@ -202,10 +246,12 @@ static _Thread_local thread_stat_t l_stat TLS_MODEL;
 #define inc_pcolor_new()
 #define inc_pcolor_dup()
 
+#define get_cnt_malloc_usable_size()
 #define get_cnt_malloc()
 #define get_cnt_free()
 #define get_cnt_realloc()
 #define get_cnt_memalign()
+#define get_time_malloc_usable_size()
 #define get_time_malloc()
 #define get_time_free()
 #define get_time_realloc()
@@ -220,7 +266,15 @@ static _Thread_local thread_stat_t l_stat TLS_MODEL;
 #define get_pcolor_get()
 #define get_pcolor_new()
 #define get_pcolor_dup()
+#define mmap_timer_start()
+#define mmap_timer_stop()
+#define munmap_timer_start()
+#define munmap_timer_stop()
+#define madvise_timer_start()
+#define madvise_timer_stop()
 
+#define malloc_usable_size_timer_start()
+#define malloc_usable_size_timer_stop()
 #define malloc_timer_start()
 #define malloc_timer_stop()
 #define free_timer_start()
