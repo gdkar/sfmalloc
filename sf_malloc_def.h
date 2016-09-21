@@ -43,6 +43,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
+#include <stdalign.h>
 #include <limits.h>
 #include <sys/mman.h>
 
@@ -128,15 +130,15 @@ typedef struct {
 #define PMAP_LEAF_LEN         (1 << PMAP_LEAF_BIT)
 
 typedef struct {
-  void* val[PMAP_LEAF_LEN];
+  _Atomic(void*) val[PMAP_LEAF_LEN];
 } pagemap_leaf_t;
 
 typedef struct {
-  pagemap_leaf_t* leaf[PMAP_INTERIOR_LEN];
+  _Atomic(pagemap_leaf_t*) leaf[PMAP_INTERIOR_LEN];
 } pagemap_node_t;
 
 typedef struct {
-  pagemap_node_t* node[PMAP_INTERIOR_LEN];
+  _Atomic(pagemap_node_t*) node[PMAP_INTERIOR_LEN];
 } pagemap_t CACHE_LINE_ALIGN;
 
 
@@ -145,21 +147,40 @@ typedef struct {
 //-------------------------------------------------------------------
 // Superpage is a unit of mmap/munmap.
 // Superpage and SPH are used interchangeably in the code.
-typedef union {
-  struct {
-    uint32_t owner_id;
-    uint32_t finish_mark;
-  };
-  uint64_t with;
-} ownermark_t __attribute__ ((aligned(8)));
+typedef uint64_t ownermark_t;
 
-#define get_ownermark_id(omark) (atomic_load(&omark).owner_id)
-#define get_ownermark_finish(omark) (atomic_load(&omark).finish_mark)
+#define ownermark_mark_mask (1ul<<63)
+#define ownermark_id_mask   ((~ownermark_mark_mask)>>1)
+#define DO_NOT_FINISH ownermark_mark_mask
 
-#define set_ownermark_id(omark, id) ((omark) = (ownermark_t){ {.owner_id = (id), .finish_mark=get_ownermark_finish(omark)}})
-#define set_ownermark_finish(omark, finish) ((omark)=(ownermark_t){{ .owner_id = get_ownermark_id(omark), .finish_mark = (finish)}})
-#define NONE            0
-#define DO_NOT_FINISH   1
+static inline bool ownermark_finish_mark(ownermark_t om)
+{
+    return om >> 63;
+}
+static inline uint32_t ownermark_owner_id(ownermark_t om)
+{
+    return om & ownermark_id_mask;
+}
+static inline ownermark_t ownermark_set_finish_mark(_Atomic(ownermark_t) *omp, bool mark)
+{
+    if(mark)
+        return atomic_fetch_or(omp,  ownermark_mark_mask);
+    else
+        return atomic_fetch_and(omp,~ownermark_mark_mask);
+}
+static inline ownermark_t ownermark_make(uint32_t owner, bool mark)
+{
+    return (owner & ownermark_id_mask) | (((uint64_t)mark)<<63);
+}
+static inline ownermark_t ownermark_set_owner_id(_Atomic(ownermark_t)*omp, uint32_t id)
+{
+    ownermark_t expected = atomic_load(omp);
+    ownermark_t desired;
+    do{
+        desired = ((uint64_t)id & ownermark_id_mask) | (expected & ownermark_mark_mask);
+    }while(!atomic_compare_exchange_strong(omp, &expected, desired));
+    return expected;
+}
 
 typedef struct sph {
   struct sph* next;            // next pointer in linked list
@@ -261,13 +282,13 @@ typedef struct {
 
 #define NUM_LRU_TABLE_ENTRY   128
 const uint8_t g_lru_table[NUM_LRU_TABLE_ENTRY] CACHE_LINE_ALIGN = {
-  0, 4, 2, 4, 0, 6, 2, 6, 1, 4, 2, 4, 1, 6, 2, 6, 
-  0, 4, 3, 4, 0, 6, 3, 6, 1, 4, 3, 4, 1, 6, 3, 6, 
-  0, 5, 2, 5, 0, 6, 2, 6, 1, 5, 2, 5, 1, 6, 2, 6, 
-  0, 5, 3, 5, 0, 6, 3, 6, 1, 5, 3, 5, 1, 6, 3, 6, 
-  0, 4, 2, 4, 0, 7, 2, 7, 1, 4, 2, 4, 1, 7, 2, 7, 
-  0, 4, 3, 4, 0, 7, 3, 7, 1, 4, 3, 4, 1, 7, 3, 7, 
-  0, 5, 2, 5, 0, 7, 2, 7, 1, 5, 2, 5, 1, 7, 2, 7, 
+  0, 4, 2, 4, 0, 6, 2, 6, 1, 4, 2, 4, 1, 6, 2, 6,
+  0, 4, 3, 4, 0, 6, 3, 6, 1, 4, 3, 4, 1, 6, 3, 6,
+  0, 5, 2, 5, 0, 6, 2, 6, 1, 5, 2, 5, 1, 6, 2, 6,
+  0, 5, 3, 5, 0, 6, 3, 6, 1, 5, 3, 5, 1, 6, 3, 6,
+  0, 4, 2, 4, 0, 7, 2, 7, 1, 4, 2, 4, 1, 7, 2, 7,
+  0, 4, 3, 4, 0, 7, 3, 7, 1, 4, 3, 4, 1, 7, 3, 7,
+  0, 5, 2, 5, 0, 7, 2, 7, 1, 5, 2, 5, 1, 7, 2, 7,
   0, 5, 3, 5, 0, 7, 3, 7, 1, 5, 3, 5, 1, 7, 3, 7
 };
 

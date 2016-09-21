@@ -672,7 +672,7 @@ static sph_t* sph_alloc(tlh_t* tlh) {
     pagemap_expand(sph->start_page, SUPERPAGE_LEN);
   }
   // Set the owner of superpage.
-  set_ownermark_id(sph->omark,tlh->thread_id);
+  ownermark_set_owner_id(&sph->omark,tlh->thread_id);
   // Prepend the new superpage to the superpage list.
   sph_list_prepend(&tlh->sp_list, sph);
   return sph;
@@ -773,8 +773,10 @@ static void sph_coalesce_pbs(pbh_t* pbh)
 
 static bool take_superpage(tlh_t* tlh, sph_t* sph) {
   // Try to change the ownership of superpage.
-  ownermark_t expected = (ownermark_t){{ .owner_id = DEAD_OWNER }};
-  if (!atomic_compare_exchange_strong(&sph->omark, &expected,(ownermark_t){{ .owner_id=tlh->thread_id}}))
+  ownermark_t expected = ownermark_make(DEAD_OWNER,true);
+
+  if (!atomic_compare_exchange_strong(&sph->omark, &expected,
+        ownermark_make(tlh->thread_id,false)))
     return false;
 
   if (sph->remote_pb_list) {
@@ -814,15 +816,14 @@ static bool take_superpage(tlh_t* tlh, sph_t* sph) {
 static void finish_superpages(tlh_t* tlh)
 {
   sph_t** sp_list = &tlh->sp_list;
-  ownermark_t live_mark, dead_mark;
-  dead_mark.owner_id    = DEAD_OWNER;
-  dead_mark.finish_mark = NONE;
+  ownermark_t live_mark;
+  ownermark_t dead_mark = ownermark_make(DEAD_OWNER,false);
 
   do {
-    live_mark = (ownermark_t){{ atomic_load(&(*sp_list)->omark).owner_id,NONE}};
+    live_mark = atomic_load(&(*sp_list)->omark) & ~DO_NOT_FINISH;
     sph_t* sph = sph_list_pop(sp_list);
     while (true) {
-      sph->omark = (ownermark_t){ .owner_id = atomic_load(&sph->omark).owner_id,.finish_mark = NONE};
+      ownermark_set_finish_mark(&sph->omark,false);
       // Try to clean up the superpage.
       if (try_to_free_superpage(sph)) {
         break;
@@ -1046,7 +1047,7 @@ static inline void pbh_free(pbh_t* pbh) {
 static inline void pbh_add_blocks(tlh_t* tlh, pbh_t* pbh,
                                  void* start_blk, void* end_blk, uint32_t N) {
   sph_t* sph = pbh_get_superpage(pbh);
-  if (UNLIKELY(atomic_load(&sph->omark).owner_id != tlh->thread_id)) {
+  if (UNLIKELY(ownermark_owner_id(atomic_load(&sph->omark)) != tlh->thread_id)) {
     // Try to free blocks to the owner.
     if (remote_free(tlh, pbh, start_blk, end_blk, N))
       return;
@@ -1319,7 +1320,7 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
   tlh->hazard_ptr->node = sph;
 
   while (1) {
-    if (UNLIKELY(atomic_load(&sph->omark).owner_id == DEAD_OWNER)) {
+    if (UNLIKELY(ownermark_owner_id(atomic_load(&sph->omark)) == DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
         tlh->hazard_ptr->node = NULL;
         pb_free(tlh, pbh);
@@ -1330,12 +1331,12 @@ static void pb_remote_free(tlh_t* tlh, void* pb, pbh_t* pbh) {
     void* top = sph->remote_pb_list;
     SET_NEXT(pb, top);
     if (atomic_compare_exchange_strong(&sph->remote_pb_list, &top, pb)) {
-      set_ownermark_finish(sph->omark, DO_NOT_FINISH);
+      ownermark_set_finish_mark(&sph->omark, DO_NOT_FINISH);
       break;
     }
   }
 
-  if (UNLIKELY(get_ownermark_id(sph->omark)== DEAD_OWNER)) {
+  if (UNLIKELY(ownermark_owner_id(atomic_load(&sph->omark))== DEAD_OWNER)) {
     take_superpage(tlh, sph);
   }
   tlh->hazard_ptr->node = NULL;
@@ -1588,7 +1589,7 @@ static void pb_cache_return(tlh_t* tlh, void* pb)
     void* next_pb = GET_NEXT(pb);
 
     sph_t* sph = pbh_get_superpage(pbh);
-    if (get_ownermark_id(sph->omark) == tlh->thread_id) {
+    if (ownermark_owner_id(atomic_load(&sph->omark)) == tlh->thread_id) {
       pb_free(tlh, pbh);
     } else {
       pb_remote_free(tlh, pb, pbh);
@@ -1886,7 +1887,7 @@ static bool remote_free(tlh_t* tlh, pbh_t* pbh, void* first, void* last, uint32_
   new_top.head = blk_idx;
   tlh->hazard_ptr->node = sph;
   while (true) {
-    if (UNLIKELY(get_ownermark_id(sph->omark)== DEAD_OWNER)) {
+    if (UNLIKELY(ownermark_owner_id(atomic_load(&sph->omark))== DEAD_OWNER)) {
       if (take_superpage(tlh, sph)) {
         tlh->hazard_ptr->node = NULL;
         return false;
@@ -1901,11 +1902,11 @@ static bool remote_free(tlh_t* tlh, pbh_t* pbh, void* first, void* last, uint32_
     }
     new_top.cnt = top.cnt + N;
     if (atomic_compare_exchange_strong(&pbh->remote_list, &top, new_top)) {
-      set_ownermark_finish(sph->omark, DO_NOT_FINISH);
+      ownermark_set_finish_mark(&sph->omark, DO_NOT_FINISH);
       break;
     }
   }
-  if (UNLIKELY(get_ownermark_id(sph->omark)== DEAD_OWNER)) {
+  if (UNLIKELY(ownermark_owner_id(atomic_load(&sph->omark))== DEAD_OWNER)) {
     take_superpage(tlh, sph);
   }
   tlh->hazard_ptr->node = NULL;
@@ -1917,7 +1918,7 @@ static inline void small_free(void* ptr, pbh_t* pbh)
   tlh_t* tlh = &l_tlh;
   if (pbh->status == PBH_AGAINST_FALSE_SHARING) {
     sph_t* sph = pbh_get_superpage(pbh);
-    if (UNLIKELY(get_ownermark_id(sph->omark) != tlh->thread_id)) {
+    if (UNLIKELY(ownermark_owner_id(atomic_load(&sph->omark)) != tlh->thread_id)) {
       // Try to free the block to the owner.
       if (remote_free(tlh, pbh, ptr, ptr, 1))
         return;
@@ -1963,7 +1964,7 @@ static inline void large_free(void* ptr, pbh_t* pbh)
       block->length++;
     } else {
       sph_t* sph = pbh_get_superpage(pbh);
-      if (get_ownermark_id(sph->omark) == tlh->thread_id) {
+      if (ownermark_owner_id(atomic_load(&sph->omark)) == tlh->thread_id) {
         pb_free(tlh, pbh);
       } else {
         pb_remote_free(tlh, ptr, pbh);
@@ -1993,7 +1994,7 @@ static inline void large_free(void* ptr, pbh_t* pbh)
                     g_way_table[pos].set_bit;
 #else
   sph_t* sph = pbh_get_superpage(pbh);
-  if (sph->omark.owner_id == tlh->thread_id) {
+  if (ownermark_owner_id(atomic_load(&sph->omark)) == tlh->thread_id) {
     pb_free(tlh, pbh);
   } else {
     pb_remote_free(tlh, ptr, pbh);
@@ -2581,7 +2582,7 @@ void print_pbh_list(pbh_t* list) {
 
     sum_cnt_free += pbh->cnt_free;
     sum_cnt_unused += pbh->cnt_unused;
-    sum_cnt_remote += pbh->remote_list.cnt;
+    sum_cnt_remote += atomic_load(&pbh->remote_list).cnt;
 
     fprintf(g_DOUT, "PBH FREE LIST: \n");
     print_block_list(pbh->free_list);
@@ -2623,7 +2624,8 @@ void print_superpage(sph_t* spage) {
       "---------------------------------------\n",
       spage,
       spage->next, spage->prev, spage->start_page,
-      spage->omark.owner_id, spage->omark.finish_mark
+      ownermark_owner_id(spage->omark),
+      ownermark_finish_mark(spage->omark)
   );
 
   pbh_t* pbh = (pbh_t*)spage + 1;
