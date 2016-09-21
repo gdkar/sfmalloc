@@ -348,7 +348,8 @@ typedef struct {
 
 #define LIKELY(x)   __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#define TID()       l_tlh.thread_id
+#define UNUSED(x) ((void)sizeof(x))
+#define TID()       (l_tlh.thread_id)
 
 
 #define CRASH(fmt,...)    \

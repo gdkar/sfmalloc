@@ -56,7 +56,6 @@
 #include "sf_malloc_ctrl.h"
 #include "sf_malloc_def.h"
 #include "sf_malloc_stat.h"
-#include "sf_malloc_atomic.h"
 
 #include <assert.h>
 
@@ -312,6 +311,7 @@ void sf_malloc_thread_exit() {
 
 
 void sf_malloc_destructor(void* val) {
+  UNUSED(val);
   sf_malloc_thread_exit();
   pthread_setspecific(g_thread_key, NULL);
 }
@@ -1040,6 +1040,7 @@ static inline pbh_t* pbh_alloc(sph_t* sph, size_t page_id, size_t len) {
 
 /* Deallocate the pbh. */
 static inline void pbh_free(pbh_t* pbh) {
+  UNUSED(pbh);
   // Do nothing...
 }
 
@@ -1604,7 +1605,8 @@ static void pb_cache_return(tlh_t* tlh, void* pb)
 ////////////////////////////////////////////////////////////////////////////
 // Allocation/Deallocation Functions
 ////////////////////////////////////////////////////////////////////////////
-static inline void* bump_alloc(size_t size, blk_list_t* b_list) {
+static inline void* bump_alloc(size_t size, blk_list_t* b_list)
+{
   void* ret = b_list->ptr_to_unused;
 
   // If size is smaller than the half of cache line size,
@@ -1617,7 +1619,7 @@ static inline void* bump_alloc(size_t size, blk_list_t* b_list) {
     b_list->cnt_free = blks_per_line - 1;
 
     void* free_blk = b_list->free_blk_list;
-    for (int i = 2; i < blks_per_line; i++) {
+    for (uint32_t i = 2; i < blks_per_line; i++) {
       void* next_blk = free_blk + size;
       SET_NEXT(free_blk, next_blk);
       free_blk = next_blk;
@@ -2345,7 +2347,7 @@ void *valloc(size_t size) {
   void *free_blk;
   int ret = posix_memalign(&free_blk, sysconf(_SC_PAGESIZE), size);
   assert(ret == 0);
-
+  (void)sizeof(ret);
   return free_blk;
 }
 
@@ -2367,6 +2369,7 @@ void *memalign(size_t boundary, size_t size) {
   void *free_blk;
   int ret = posix_memalign(&free_blk, boundary, size);
   assert(ret == 0);
+  (void)sizeof(ret);
 
   return free_blk;
 }
@@ -2381,18 +2384,17 @@ void malloc_stats() {
 #ifdef MALLOC_STATS
 void stats_init() {
   FILE *cpuinfo_stream;
-  char buffer[100];
+  char buffer[128];
 
   cpuinfo_stream = fopen("/proc/cpuinfo", "r");
-  if (cpuinfo_stream == NULL) {
+  if (!cpuinfo_stream)
     HANDLE_ERROR("fopen() in stats_init()");
-  }
-
-  while (fgets(buffer, 100, cpuinfo_stream)) {
+  while (fgets(buffer, sizeof(buffer), cpuinfo_stream)) {
     if (strncmp(buffer, "cpu MHz", 7) == 0) {
-      char *pch = strtok(buffer, " :");
+      char *saveptr;
+      char *pch = strtok_r(buffer, " :",&saveptr);
       for (int i = 0; i < 2; i++) {
-        pch = strtok(NULL, " :");
+        pch = strtok_r(NULL, " :",&saveptr);
       }
       CPU_CLOCK = atof(pch) * 1e6;
 //      printf("cpu frequency: %.1f\n", CPU_CLOCK);
@@ -2447,7 +2449,7 @@ void print_stats() {
 void cfree(void *ptr)                               ALIAS("free");
 
 #ifdef __GLIBC__
-size_t __libc_malloc_usable_size(void *ptr)          ALIAS("malloc_usable_size");
+size_t __libc_malloc_usable_size(void *ptr)         ALIAS("malloc_usable_size");
 void *__libc_malloc(size_t size)                    ALIAS("malloc");
 void  __libc_free(void *ptr)                        ALIAS("free");
 void *__libc_realloc(void *ptr, size_t size)        ALIAS("realloc");
@@ -2466,15 +2468,12 @@ int __posix_memalign(void **r, size_t a, size_t s)  ALIAS("posix_memalign");
 // Output stream for debugging
 static FILE *g_DOUT = NULL;
 
-static void debug_init() {
-  g_DOUT = stdout;
-}
-
+static void debug_init() { g_DOUT = stdout; }
 static inline void print_class_array()
 {
   fprintf(g_DOUT, "========== SizeMap.class_array ==========\n");
-  for (int i = 0; i < CLASS_ARRAY_SIZE; ++i) {
-    fprintf(g_DOUT, "%3d: %u\n", i, g_sizemap.class_array[i]);
+  for (size_t i = 0; i < CLASS_ARRAY_SIZE; ++i) {
+    fprintf(g_DOUT, "%3zu: %u\n", i, g_sizemap.class_array[i]);
   }
   fprintf(g_DOUT, "\n");
 }

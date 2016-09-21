@@ -13,7 +13,7 @@ DEBUG_OBJS  = $(patsubst %.o,%-debug.o, $(OBJS))
 LIBS = -lpthread -lrt -ldl
 LIB_MALLOC = .libs/libsfmalloc-static.a .libs/libsfmalloc-shared.so .libs/libsfmalloc-debug.so
 
-OPT_FLAGS = -O2 -Ofast -Wall -g -ggdb -pthread -shared -fPIC \
+OPT_FLAGS = -O2 -Ofast -Wall -Wextra -g -ggdb -pthread -shared -fPIC \
   -march=native \
   -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc \
   -fno-builtin-calloc -fno-builtin-cfree \
@@ -43,23 +43,23 @@ show-config:
 	@echo CFLAGS=$(CFLAGS)
 	@echo CXX=$(CXX)
 	@echo CXXFLAGS=$(CXXFLAGS)
-.objs/%-debug.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
+.objs/%-debug.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
-.objs/%-shared.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
+.objs/%-shared.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
-.objs/%-static.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
+.objs/%-static.o: %.cpp sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
 
-.objs/%-debug.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
+.objs/%-debug.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
-.objs/%-shared.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
+.objs/%-shared.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
-.objs/%-static.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h sf_malloc_atomic.h Makefile
+.objs/%-static.o: %.c sf_malloc.h sf_malloc_def.h sf_malloc_ctrl.h Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -fPIC -shared $(INC_FLAGS) $(OPT_FLAGS) $(DEFS) $< -c -o $@
 

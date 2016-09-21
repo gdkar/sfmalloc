@@ -55,7 +55,7 @@ typedef void *(*start_fpt)(void *);
 typedef struct {
     start_fpt start_fun;
     void *arg;
-} wrapper_arg_t; 
+} wrapper_arg_t;
 
 /* function pointers */
 static pthread_create_fpt thread_create = NULL;

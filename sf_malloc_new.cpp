@@ -53,35 +53,51 @@ extern "C" {
 # define __THROW
 #endif
 
-void *operator new(size_t size) throw (std::bad_alloc) {
+void *operator new(size_t size) throw (std::bad_alloc)
+{
   return malloc(size);
 }
 
-void operator delete(void *p) __THROW {
+void operator delete(void *p) __THROW
+{
+  free(p);
+}
+void operator delete(void *p,std::size_t _size) __THROW
+{
+  void(sizeof(_size));
+  free(p);
+}
+void *operator new[](size_t size) throw (std::bad_alloc)
+{
+  return malloc(size);
+}
+void operator delete[](void *p,std::size_t _size) noexcept
+{
+  void(sizeof(_size));
+  free(p);
+}
+void operator delete[](void *p) noexcept
+{
   free(p);
 }
 
-void *operator new[](size_t size) throw (std::bad_alloc) {
+void *operator new(size_t size, const std::nothrow_t&) noexcept
+{
   return malloc(size);
 }
 
-void operator delete[](void *p) __THROW {
+void *operator new[](size_t size, const std::nothrow_t&) noexcept
+{
+  return malloc(size);
+}
+
+void operator delete(void *p, const std::nothrow_t&) noexcept
+{
   free(p);
 }
 
-void *operator new(size_t size, const std::nothrow_t&) __THROW {
-  return malloc(size);
-}
-
-void *operator new[](size_t size, const std::nothrow_t&) __THROW {
-  return malloc(size);
-}
-
-void operator delete(void *p, const std::nothrow_t&) __THROW {
-  free(p);
-}
-
-void operator delete[](void *p, const std::nothrow_t&) __THROW {
+void operator delete[](void *p, const std::nothrow_t&) noexcept
+{
   free(p);
 }
 
